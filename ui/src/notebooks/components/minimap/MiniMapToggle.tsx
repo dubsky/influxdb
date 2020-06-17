@@ -59,7 +59,4 @@ const mdtp: DispatchProps = {
   handleSetNotebookMiniMapState: setNotebookMiniMapState,
 }
 
-export default connect<StateProps, DispatchProps>(
-  mstp,
-  mdtp
-)(MiniMapToggle)
+export default connect<StateProps, DispatchProps>(mstp, mdtp)(MiniMapToggle)
