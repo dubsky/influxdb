@@ -14,11 +14,8 @@ var (
 
 var _ influxdb.SessionService = (*Service)(nil)
 
-func (s *Service) initializeSessions(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket([]byte(sessionBucket)); err != nil {
-		return err
-	}
-	return nil
+func (s *Service) createSessionBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, sessionBucket)
 }
 
 // RenewSession extends the expire time to newExpiration.

@@ -42,7 +42,7 @@ type (
 
 // StoreKV is a store implementation that uses a kv store backing.
 type StoreKV struct {
-	kvStore   kv.Store
+	kvStore   kv.SchemaStore
 	indexBase *kv.IndexStore
 
 	once sync.Once
@@ -53,7 +53,7 @@ var _ Store = (*StoreKV)(nil)
 // NewStoreKV creates a new StoreKV entity. This does not initialize the store. You will
 // want to init it if you want to have this init donezo at startup. If not it'll lazy
 // load the buckets as they are used.
-func NewStoreKV(store kv.Store) *StoreKV {
+func NewStoreKV(store kv.SchemaStore) *StoreKV {
 	const resource = "pkg stack"
 
 	storeKV := &StoreKV{
@@ -70,9 +70,7 @@ func NewStoreKV(store kv.Store) *StoreKV {
 // Init will initialize the all required buckets for the kv store. If not called, will be
 // called implicitly on first read/write operation.
 func (s *StoreKV) Init(ctx context.Context) error {
-	return s.kvStore.Update(ctx, func(tx kv.Tx) error {
-		return s.indexBase.Init(ctx, tx)
-	})
+	return s.indexBase.Init(ctx, s.kvStore)
 }
 
 // CreateStack will create a new stack. If collisions are found will fail.

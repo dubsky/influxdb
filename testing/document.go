@@ -12,19 +12,16 @@ import (
 	"github.com/influxdata/influxdb/v2/authorizer"
 	icontext "github.com/influxdata/influxdb/v2/context"
 	"github.com/influxdata/influxdb/v2/kv"
+	"github.com/influxdata/influxdb/v2/kv/kvtest"
 	"github.com/influxdata/influxdb/v2/mock"
-	"go.uber.org/zap/zaptest"
 )
 
 // NewDocumentIntegrationTest will test the documents related funcs.
-func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
+func NewDocumentIntegrationTest(store kv.SchemaStore) func(t *testing.T) {
 	return func(t *testing.T) {
 		ctx := context.Background()
-		kvsvc := kv.NewService(zaptest.NewLogger(t), store)
+		_, kvsvc := kvtest.NewService(t, ctx, store)
 		mockTimeGen := new(mock.TimeGenerator)
-		if err := kvsvc.Initialize(ctx); err != nil {
-			t.Fatalf("failed to initialize service: %v", err)
-		}
 
 		kvsvc.TimeGenerator = mockTimeGen
 		svc := authorizer.NewDocumentService(kvsvc)

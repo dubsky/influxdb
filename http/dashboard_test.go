@@ -17,6 +17,7 @@ import (
 	"github.com/influxdata/influxdb/v2/inmem"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
 	"github.com/influxdata/influxdb/v2/kv"
+	"github.com/influxdata/influxdb/v2/kv/kvtest"
 	"github.com/influxdata/influxdb/v2/mock"
 	platformtesting "github.com/influxdata/influxdb/v2/testing"
 	"github.com/yudai/gojsondiff"
@@ -1913,9 +1914,7 @@ func jsonEqual(s1, s2 string) (eq bool, diff string, err error) {
 func newInMemKVSVC(t *testing.T) *kv.Service {
 	t.Helper()
 
-	svc := kv.NewService(zaptest.NewLogger(t), inmem.NewKVStore())
-	if err := svc.Initialize(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	_, svc := kvtest.NewService(t, context.Background(), inmem.NewKVStore())
+
 	return svc
 }

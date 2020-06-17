@@ -36,6 +36,10 @@ func init() {
 	}
 }
 
+func (s *Service) createSourceBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, sourceBucket)
+}
+
 func (s *Service) initializeSources(ctx context.Context, tx Tx) error {
 	if _, err := tx.Bucket(sourceBucket); err != nil {
 		return err

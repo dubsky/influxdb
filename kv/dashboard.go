@@ -33,17 +33,16 @@ const (
 var _ influxdb.DashboardService = (*Service)(nil)
 var _ influxdb.DashboardOperationLogService = (*Service)(nil)
 
-func (s *Service) initializeDashboards(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(dashboardBucket); err != nil {
+func (s *Service) createDashboardBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, dashboardBucket); err != nil {
 		return err
 	}
-	if _, err := tx.Bucket(orgDashboardIndex); err != nil {
+
+	if err := creator.CreateBucket(ctx, orgDashboardIndex); err != nil {
 		return err
 	}
-	if _, err := tx.Bucket(dashboardCellViewBucket); err != nil {
-		return err
-	}
-	return nil
+
+	return creator.CreateBucket(ctx, dashboardCellViewBucket)
 }
 
 // FindDashboardByID retrieves a dashboard by id.

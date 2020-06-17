@@ -27,6 +27,22 @@ var (
 		Msg:  "user to resource mapping not found",
 		Code: influxdb.ENotFound,
 	}
+
+	// URMByUserIndeMappingx is the mapping description of an index
+	// between a user and a URM
+	URMByUserIndexMapping = NewIndexMapping(
+		urmBucket,
+		urmByUserIndexBucket,
+		func(v []byte) ([]byte, error) {
+			var urm influxdb.UserResourceMapping
+			if err := json.Unmarshal(v, &urm); err != nil {
+				return nil, err
+			}
+
+			id, _ := urm.UserID.Encode()
+			return id, nil
+		},
+	)
 )
 
 // UnavailableURMServiceError is used if we aren't able to interact with the
@@ -66,11 +82,8 @@ func NonUniqueMappingError(userID influxdb.ID) error {
 	}
 }
 
-func (s *Service) initializeURMs(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(urmBucket); err != nil {
-		return UnavailableURMServiceError(err)
-	}
-	return nil
+func (s *Service) createURMBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, urmBucket)
 }
 
 func filterMappingsFn(filter influxdb.UserResourceMappingFilter) func(m *influxdb.UserResourceMapping) bool {

@@ -22,16 +22,13 @@ type IndexStore struct {
 }
 
 // Init creates the entity and index buckets.
-func (s *IndexStore) Init(ctx context.Context, tx Tx) error {
-	span, ctx := tracing.StartSpanFromContext(ctx)
-	defer span.Finish()
-
-	initFns := []func(context.Context, Tx) error{
+func (s *IndexStore) Init(ctx context.Context, creator BucketCreator) error {
+	initFns := []func(context.Context, BucketCreator) error{
 		s.EntStore.Init,
 		s.IndexStore.Init,
 	}
 	for _, fn := range initFns {
-		if err := fn(ctx, tx); err != nil {
+		if err := fn(ctx, creator); err != nil {
 			return err
 		}
 	}

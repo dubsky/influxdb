@@ -1,4 +1,4 @@
-package kv_test
+package migration_test
 
 import (
 	"testing"

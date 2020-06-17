@@ -30,11 +30,8 @@ var (
 
 var _ influxdb.NotificationRuleStore = (*Service)(nil)
 
-func (s *Service) initializeNotificationRule(ctx context.Context, tx Tx) error {
-	if _, err := s.notificationRuleBucket(tx); err != nil {
-		return err
-	}
-	return nil
+func (s *Service) createNotificationRuleBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, notificationRuleBucket)
 }
 
 // UnavailableNotificationRuleStoreError is used if we aren't able to interact with the

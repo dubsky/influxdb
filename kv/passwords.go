@@ -72,9 +72,8 @@ var (
 
 var _ influxdb.PasswordsService = (*Service)(nil)
 
-func (s *Service) initializePasswords(ctx context.Context, tx Tx) error {
-	_, err := tx.Bucket(userpasswordBucket)
-	return err
+func (s *Service) createPasswordBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, userpasswordBucket)
 }
 
 // CompareAndSetPassword checks the password and if they match

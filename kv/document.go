@@ -13,48 +13,29 @@ const (
 	documentMetaBucket    = "/documents/meta"
 )
 
-func (s *Service) initializeDocuments(ctx context.Context, tx Tx) error {
-	if _, err := s.createDocumentStore(ctx, tx, "templates"); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // DocumentStore implements influxdb.DocumentStore.
 type DocumentStore struct {
 	service   *Service
 	namespace string
 }
 
+func (s *Service) createDocumentBuckets(ctx context.Context, creator BucketCreator) error {
+	_, err := s.createDocumentStore(ctx, creator, "templates")
+	return err
+}
+
 // CreateDocumentStore creates an instance of a document store by instantiating the buckets for the store.
 func (s *Service) CreateDocumentStore(ctx context.Context, ns string) (influxdb.DocumentStore, error) {
 	// TODO(desa): keep track of which namespaces exist.
-	var ds influxdb.DocumentStore
-
-	err := s.kv.Update(ctx, func(tx Tx) error {
-		store, err := s.createDocumentStore(ctx, tx, ns)
-		if err != nil {
-			return err
-		}
-
-		ds = store
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return ds, nil
+	return s.createDocumentStore(ctx, s.kv, ns)
 }
 
-func (s *Service) createDocumentStore(ctx context.Context, tx Tx, ns string) (influxdb.DocumentStore, error) {
-	if _, err := tx.Bucket([]byte(path.Join(ns, documentContentBucket))); err != nil {
+func (s *Service) createDocumentStore(ctx context.Context, creator BucketCreator, ns string) (influxdb.DocumentStore, error) {
+	if err := creator.CreateBucket(ctx, []byte(path.Join(ns, documentContentBucket))); err != nil {
 		return nil, err
 	}
 
-	if _, err := tx.Bucket([]byte(path.Join(ns, documentMetaBucket))); err != nil {
+	if err := creator.CreateBucket(ctx, []byte(path.Join(ns, documentMetaBucket))); err != nil {
 		return nil, err
 	}
 

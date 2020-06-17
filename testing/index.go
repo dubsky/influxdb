@@ -99,7 +99,7 @@ func newNResourcesWithUserCount(n, userCount int) (resources []someResource) {
 	return
 }
 
-func TestIndex(t *testing.T, store kv.Store) {
+func TestIndex(t *testing.T, store kv.SchemaStore) {
 	t.Run("Test_PopulateAndVerify", func(t *testing.T) {
 		testPopulateAndVerify(t, store)
 	})
@@ -109,7 +109,7 @@ func TestIndex(t *testing.T, store kv.Store) {
 	})
 }
 
-func testPopulateAndVerify(t *testing.T, store kv.Store) {
+func testPopulateAndVerify(t *testing.T, store kv.SchemaStore) {
 	var (
 		ctx           = context.TODO()
 		resources     = newNResources(20)
@@ -181,14 +181,9 @@ func testPopulateAndVerify(t *testing.T, store kv.Store) {
 	}
 
 	// populate the missing indexes
-	count, err = resourceStore.ownerIDIndex.Populate(ctx, store)
-	if err != nil {
-		t.Errorf("unexpected err %v", err)
-	}
 
-	// ensure only 10 items were reported as being indexed
-	if count != 10 {
-		t.Errorf("expected to index 20 items, instead indexed %d items", count)
+	if err = kv.NewIndexMigration(mapping, store).Up(ctx); err != nil {
+		t.Errorf("unexpected err %v", err)
 	}
 
 	// check the contents of the index

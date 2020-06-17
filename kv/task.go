@@ -79,17 +79,16 @@ func kvToInfluxTask(k *kvTask) *influxdb.Task {
 	}
 }
 
-func (s *Service) initializeTasks(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(taskBucket); err != nil {
+func (s *Service) createTaskBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, taskBucket); err != nil {
 		return err
 	}
-	if _, err := tx.Bucket(taskRunBucket); err != nil {
+
+	if err := creator.CreateBucket(ctx, taskRunBucket); err != nil {
 		return err
 	}
-	if _, err := tx.Bucket(taskIndexBucket); err != nil {
-		return err
-	}
-	return nil
+
+	return creator.CreateBucket(ctx, taskIndexBucket)
 }
 
 // FindTaskByID returns a single task

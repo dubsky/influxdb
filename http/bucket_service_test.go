@@ -16,7 +16,7 @@ import (
 	platform "github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/inmem"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
-	"github.com/influxdata/influxdb/v2/kv"
+	"github.com/influxdata/influxdb/v2/kv/kvtest"
 	"github.com/influxdata/influxdb/v2/mock"
 	"github.com/influxdata/influxdb/v2/pkg/httpc"
 	platformtesting "github.com/influxdata/influxdb/v2/testing"
@@ -1174,17 +1174,13 @@ func TestService_handlePostBucketOwner(t *testing.T) {
 }
 
 func initBucketService(f platformtesting.BucketFields, t *testing.T) (platform.BucketService, string, func()) {
-	svc := kv.NewService(zaptest.NewLogger(t), inmem.NewKVStore())
+	ctx := context.Background()
+	_, svc := kvtest.NewService(t, ctx, inmem.NewKVStore())
 	svc.IDGenerator = f.IDGenerator
 	svc.OrgBucketIDs = f.OrgBucketIDs
 	svc.TimeGenerator = f.TimeGenerator
 	if f.TimeGenerator == nil {
 		svc.TimeGenerator = platform.RealTimeGenerator{}
-	}
-
-	ctx := context.Background()
-	if err := svc.Initialize(ctx); err != nil {
-		t.Fatal(err)
 	}
 
 	for _, o := range f.Organizations {

@@ -98,14 +98,12 @@ func encodeKeyValueIndexKey(k []byte) []byte {
 	return h.Sum(nil)
 }
 
-func (s *Service) initializeKVLog(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(kvlogBucket); err != nil {
+func (s *Service) createKVLogBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, kvlogBucket); err != nil {
 		return err
 	}
-	if _, err := tx.Bucket(kvlogIndex); err != nil {
-		return err
-	}
-	return nil
+
+	return creator.CreateBucket(ctx, kvlogIndex)
 }
 
 var errKeyValueLogBoundsNotFound = &platform.Error{

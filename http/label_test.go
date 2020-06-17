@@ -14,7 +14,7 @@ import (
 	platform "github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/inmem"
 	kithttp "github.com/influxdata/influxdb/v2/kit/transport/http"
-	"github.com/influxdata/influxdb/v2/kv"
+	"github.com/influxdata/influxdb/v2/kv/kvtest"
 	"github.com/influxdata/influxdb/v2/mock"
 	platformtesting "github.com/influxdata/influxdb/v2/testing"
 	"go.uber.org/zap/zaptest"
@@ -595,13 +595,9 @@ func TestService_handlePatchLabel(t *testing.T) {
 }
 
 func initLabelService(f platformtesting.LabelFields, t *testing.T) (platform.LabelService, string, func()) {
-	svc := kv.NewService(zaptest.NewLogger(t), inmem.NewKVStore())
-	svc.IDGenerator = f.IDGenerator
-
 	ctx := context.Background()
-	if err := svc.Initialize(ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, svc := kvtest.NewService(t, ctx, inmem.NewKVStore())
+	svc.IDGenerator = f.IDGenerator
 
 	for _, l := range f.Labels {
 		if err := svc.PutLabel(ctx, l); err != nil {

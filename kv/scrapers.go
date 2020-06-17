@@ -81,9 +81,8 @@ var (
 
 var _ influxdb.ScraperTargetStoreService = (*Service)(nil)
 
-func (s *Service) initializeScraperTargets(ctx context.Context, tx Tx) error {
-	_, err := s.scrapersBucket(tx)
-	return err
+func (s *Service) createScraperBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, scrapersBucket)
 }
 
 func (s *Service) scrapersBucket(tx Tx) (Bucket, error) {

@@ -38,14 +38,12 @@ var ErrFailureGeneratingID = &influxdb.Error{
 var _ influxdb.OrganizationService = (*Service)(nil)
 var _ influxdb.OrganizationOperationLogService = (*Service)(nil)
 
-func (s *Service) initializeOrgs(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(organizationBucket); err != nil {
+func (s *Service) createOrganizationBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, organizationBucket); err != nil {
 		return err
 	}
-	if _, err := tx.Bucket(organizationIndex); err != nil {
-		return err
-	}
-	return nil
+
+	return creator.CreateBucket(ctx, organizationIndex)
 }
 
 // FindOrganizationByID retrieves a organization by id.

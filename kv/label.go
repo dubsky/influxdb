@@ -16,20 +16,16 @@ var (
 	labelIndex         = []byte("labelindexv1")
 )
 
-func (s *Service) initializeLabels(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(labelBucket); err != nil {
+func (s *Service) createLabelBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, labelBucket); err != nil {
 		return err
 	}
 
-	if _, err := tx.Bucket(labelMappingBucket); err != nil {
+	if err := creator.CreateBucket(ctx, labelMappingBucket); err != nil {
 		return err
 	}
 
-	if _, err := tx.Bucket(labelIndex); err != nil {
-		return err
-	}
-
-	return nil
+	return creator.CreateBucket(ctx, labelIndex)
 }
 
 // FindLabelByID finds a label by its ID

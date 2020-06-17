@@ -17,14 +17,12 @@ var (
 
 var _ influxdb.AuthorizationService = (*Service)(nil)
 
-func (s *Service) initializeAuths(ctx context.Context, tx Tx) error {
-	if _, err := tx.Bucket(authBucket); err != nil {
+func (s *Service) createAuthBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, authBucket); err != nil {
 		return err
 	}
-	if _, err := authIndexBucket(tx); err != nil {
-		return err
-	}
-	return nil
+
+	return creator.CreateBucket(ctx, authIndex)
 }
 
 // FindAuthorizationByID retrieves a authorization by id.

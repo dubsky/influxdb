@@ -130,11 +130,8 @@ func (s *StoreBase) EntKey(ctx context.Context, ent Entity) ([]byte, error) {
 }
 
 // Init creates the buckets.
-func (s *StoreBase) Init(ctx context.Context, tx Tx) error {
-	span, ctx := s.startSpan(ctx)
-	defer span.Finish()
-
-	if _, err := s.bucket(ctx, tx); err != nil {
+func (s *StoreBase) Init(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, s.BktName); err != nil {
 		return &influxdb.Error{
 			Code: influxdb.EInternal,
 			Msg:  fmt.Sprintf("failed to create bucket: %s", string(s.BktName)),

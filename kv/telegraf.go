@@ -74,14 +74,12 @@ var (
 
 var _ influxdb.TelegrafConfigStore = (*Service)(nil)
 
-func (s *Service) initializeTelegraf(ctx context.Context, tx Tx) error {
-	if _, err := s.telegrafBucket(tx); err != nil {
+func (s *Service) createTelegrafBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, telegrafBucket); err != nil {
 		return err
 	}
-	if _, err := s.telegrafPluginsBucket(tx); err != nil {
-		return err
-	}
-	return nil
+
+	return creator.CreateBucket(ctx, telegrafPluginsBucket)
 }
 
 func (s *Service) telegrafBucket(tx Tx) (Bucket, error) {

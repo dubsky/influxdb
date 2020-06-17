@@ -11,11 +11,8 @@ import (
 // TODO: eradicate this with migration strategy
 var variableOrgsIndex = []byte("variableorgsv1")
 
-func (s *Service) initializeVariablesOrgIndex(tx Tx) error {
-	if _, err := tx.Bucket(variableOrgsIndex); err != nil {
-		return err
-	}
-	return nil
+func (s *Service) createVariablesOrgIndexBuckets(ctx context.Context, creator BucketCreator) error {
+	return creator.CreateBucket(ctx, variableOrgsIndex)
 }
 
 func decodeVariableOrgsIndexKey(indexKey []byte) (orgID influxdb.ID, variableID influxdb.ID, err error) {

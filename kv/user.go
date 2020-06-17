@@ -19,15 +19,12 @@ var _ influxdb.UserService = (*Service)(nil)
 var _ influxdb.UserOperationLogService = (*Service)(nil)
 
 // Initialize creates the buckets for the user service.
-func (s *Service) initializeUsers(ctx context.Context, tx Tx) error {
-	if _, err := s.userBucket(tx); err != nil {
+func (s *Service) createUserBuckets(ctx context.Context, creator BucketCreator) error {
+	if err := creator.CreateBucket(ctx, userBucket); err != nil {
 		return err
 	}
 
-	if _, err := s.userIndexBucket(tx); err != nil {
-		return err
-	}
-	return nil
+	return creator.CreateBucket(ctx, userIndex)
 }
 
 func (s *Service) userBucket(tx Tx) (Bucket, error) {

@@ -39,6 +39,7 @@ import (
 	"github.com/influxdata/influxdb/v2/kv"
 	"github.com/influxdata/influxdb/v2/label"
 	influxlogger "github.com/influxdata/influxdb/v2/logger"
+	"github.com/influxdata/influxdb/v2/migrations"
 	"github.com/influxdata/influxdb/v2/nats"
 	"github.com/influxdata/influxdb/v2/pkger"
 	infprom "github.com/influxdata/influxdb/v2/prometheus"
@@ -348,7 +349,7 @@ type Launcher struct {
 	queueSize                       int
 
 	boltClient    *bolt.Client
-	kvStore       kv.Store
+	kvStore       kv.SchemaStore
 	kvService     *kv.Service
 	engine        Engine
 	StorageConfig storage.Config
@@ -572,7 +573,8 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		return err
 	}
 
-	if err := m.kvService.Initialize(ctx); err != nil {
+	// apply migrations to metadata store
+	if err := migrations.Up(ctx, m.log.With(zap.String("service", "migrations")), m.kvStore, m.kvService); err != nil {
 		m.log.Error("Failed to initialize kv service", zap.Error(err))
 		return err
 	}
