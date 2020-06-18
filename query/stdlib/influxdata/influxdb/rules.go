@@ -732,8 +732,16 @@ func canPushWindowedAggregate(ctx context.Context, fnNode plan.Node) bool {
 		if !feature.PushDownWindowAggregateFirst().Enabled(ctx) || !caps.HaveFirst() {
 			return false
 		}
+		firstSpec := fnNode.ProcedureSpec().(*universe.FirstProcedureSpec)
+		if firstSpec.Column != execute.DefaultValueColLabel {
+			return false
+		}
 	case universe.LastKind:
 		if !feature.PushDownWindowAggregateLast().Enabled(ctx) || !caps.HaveLast() {
+			return false
+		}
+		lastSpec := fnNode.ProcedureSpec().(*universe.LastProcedureSpec)
+		if lastSpec.Column != execute.DefaultValueColLabel {
 			return false
 		}
 	}
@@ -758,7 +766,6 @@ func (PushDownWindowAggregateRule) Rewrite(ctx context.Context, pn plan.Node) (p
 	// timeColumn: must be "_time"
 	// startColumn: must be "_start"
 	// stopColumn: must be "_stop"
-	// createEmpty: must be false
 	window := windowSpec.Window
 	if !window.Every.Equal(window.Period) ||
 		window.Every.Months() != 0 ||
