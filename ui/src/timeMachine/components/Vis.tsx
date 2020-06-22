@@ -38,6 +38,7 @@ import {
 
 // Selectors
 import {getActiveTimeRange} from 'src/timeMachine/selectors/index'
+import {providesViewVariablesAfterRender} from 'src/shared/components/views/loadingStyle'
 
 interface StateProps {
   timeRange: TimeRange | null
@@ -97,6 +98,26 @@ const TimeMachineVis: SFC<Props> = ({
     'time-machine--view__empty': noQueries,
   })
 
+  const viewSwitcher = () => (
+    <ViewSwitcher
+      giraffeResult={giraffeResult}
+      timeRange={timeRange}
+      files={files}
+      properties={resolvedViewProperties}
+      checkType={checkType}
+      checkThresholds={checkThresholds}
+      timeZone={timeZone}
+      statuses={statuses}
+      theme="dark"
+      isInConfigurationMode={true}
+    />
+  )
+  if (
+    providesViewVariablesAfterRender(resolvedViewProperties) &&
+    !isViewingRawData
+  ) {
+    return viewSwitcher()
+  }
   return (
     <div className={timeMachineViewClassName}>
       <ErrorBoundary>
@@ -123,17 +144,7 @@ const TimeMachineVis: SFC<Props> = ({
               }
             </AutoSizer>
           ) : (
-            <ViewSwitcher
-              giraffeResult={giraffeResult}
-              timeRange={timeRange}
-              files={files}
-              properties={resolvedViewProperties}
-              checkType={checkType}
-              checkThresholds={checkThresholds}
-              timeZone={timeZone}
-              statuses={statuses}
-              theme="dark"
-            />
+            viewSwitcher()
           )}
         </EmptyQueryView>
       </ErrorBoundary>

@@ -66,6 +66,8 @@ interface QueriesState {
   duration: number
   giraffeResult: FromFluxResult
   statuses: StatusRow[][]
+  onViewVariablesReady: (variables: VariableAssignment[]) => void
+  waitingForViewVariables: boolean
 }
 
 interface StateProps {
@@ -83,6 +85,7 @@ interface OwnProps {
   implicitSubmit?: boolean
   children: (r: QueriesState) => JSX.Element
   check: Partial<Check>
+  shouldWaitForViewVariables: boolean
 }
 
 interface DispatchProps {
@@ -127,8 +130,15 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
 
   private pendingResults: Array<CancelBox<RunQueryResult>> = []
   private pendingCheckStatuses: CancelBox<StatusRow[][]> = null
+  private waitingForViewVariables: boolean
+  private viewVariableAssignment: VariableAssignment[]
 
-  public componentDidMount() {
+  constructor(props) {
+    super(props)
+    this.waitingForViewVariables = props.shouldWaitForViewVariables
+  }
+
+  private setupObserver() {
     this.observer = new IntersectionObserver(entries => {
       entries.forEach(entry => {
         const {isIntersecting} = entry
@@ -143,14 +153,34 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
     this.observer.observe(this.ref.current)
   }
 
+  public componentDidMount() {
+    if (!this.props.shouldWaitForViewVariables || !this.waitingForViewVariables)
+      this.setupObserver()
+  }
+
   public componentDidUpdate(prevProps: Props) {
-    if (this.shouldReload(prevProps) && this.isIntersecting) {
-      this.reload()
+    if (
+      !this.props.shouldWaitForViewVariables ||
+      !this.waitingForViewVariables
+    ) {
+      if (this.shouldReload(prevProps) && this.isIntersecting) {
+        this.reload()
+      }
     }
   }
 
   public componentWillUnmount() {
     this.observer && this.observer.disconnect()
+  }
+
+  private onViewVariablesReady = viewVariableAssignment => {
+    this.viewVariableAssignment = viewVariableAssignment
+    this.waitingForViewVariables = false
+    if (this.observer) {
+      this.reload()
+    } else {
+      this.setupObserver()
+    }
   }
 
   public render() {
@@ -164,7 +194,6 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
       statuses,
     } = this.state
     const {className, style} = this.props
-
     return (
       <div ref={this.ref} className={className} style={style}>
         {this.props.children({
@@ -175,15 +204,17 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
           duration,
           isInitialFetch: fetchCount === 1,
           statuses,
+          onViewVariablesReady: this.onViewVariablesReady,
+          waitingForViewVariables: this.waitingForViewVariables,
         })}
       </div>
     )
   }
 
   private reload = async () => {
+    if (this.waitingForViewVariables) return
     const {variables, notify, check, buckets} = this.props
     const queries = this.props.queries.filter(({text}) => !!text.trim())
-
     if (!queries.length) {
       this.setState(defaultState())
 
@@ -218,8 +249,11 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
           getOrgIDFromBuckets(text, buckets) || this.props.params.orgID
 
         const windowVars = getWindowVars(text, vars)
-        const extern = buildVarsOption([...vars, ...windowVars])
-
+        const extern = buildVarsOption([
+          ...vars,
+          ...windowVars,
+          ...(this.viewVariableAssignment || []),
+        ])
         return runQuery(orgID, text, extern)
       })
 

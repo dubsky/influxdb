@@ -19,6 +19,7 @@ import {getActiveTimeMachine} from 'src/timeMachine/selectors'
 import {AppState} from 'src/types'
 import {ButtonShape} from '@influxdata/clockface'
 import {Color} from 'src/types/colors'
+import {ColoredViewProperties} from 'src/types'
 
 enum ThresholdColoringSetting {
   Background = 'background',
@@ -87,7 +88,8 @@ class ThresholdColoring extends PureComponent<Props> {
 }
 
 const mstp = (state: AppState) => {
-  const colors = getActiveTimeMachine(state).view.properties.colors as Color[]
+  const colors = (getActiveTimeMachine(state).view
+    .properties as ColoredViewProperties).colors as Color[]
 
   return {colors}
 }

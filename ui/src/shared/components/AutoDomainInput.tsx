@@ -14,11 +14,15 @@ interface MinMaxInputsProps {
   initialMin: string
   initialMax: string
   onSetMinMax: (minMax: [number, number]) => void
+  minLabel?: string
+  maxLabel?: string
 }
 
 const MinMaxInputs: SFC<MinMaxInputsProps> = ({
   initialMin,
   initialMax,
+  minLabel,
+  maxLabel,
   onSetMinMax,
 }) => {
   const [minInput, setMinInput] = useOneWayState(initialMin)
@@ -52,7 +56,7 @@ const MinMaxInputs: SFC<MinMaxInputsProps> = ({
   return (
     <>
       <Grid.Column widthXS={Columns.Six}>
-        <Form.Element label="Min">
+        <Form.Element label={minLabel || 'Min'}>
           <Input
             value={minInput}
             onChange={e => setMinInput(e.target.value)}
@@ -63,7 +67,7 @@ const MinMaxInputs: SFC<MinMaxInputsProps> = ({
         </Form.Element>
       </Grid.Column>
       <Grid.Column widthXS={Columns.Six}>
-        <Form.Element label="Max">
+        <Form.Element label={maxLabel || 'Max'}>
           <Input
             value={maxInput}
             onChange={e => setMaxInput(e.target.value)}
@@ -85,12 +89,16 @@ interface AutoDomainInputProps {
   domain: [number, number]
   onSetDomain: (domain: [number, number]) => void
   label?: string
+  minLabel?: string
+  maxLabel?: string
 }
 
 const AutoDomainInput: SFC<AutoDomainInputProps> = ({
   domain,
   onSetDomain,
   label = 'Set Domain',
+  minLabel,
+  maxLabel,
 }) => {
   const [showInputs, setShowInputs] = useState(!!domain)
 
@@ -140,6 +148,8 @@ const AutoDomainInput: SFC<AutoDomainInputProps> = ({
             <MinMaxInputs
               initialMin={initialMin}
               initialMax={initialMax}
+              minLabel={minLabel}
+              maxLabel={maxLabel}
               onSetMinMax={onSetDomain}
             />
           </Grid.Row>

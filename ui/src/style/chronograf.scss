@@ -126,7 +126,8 @@
 @import 'src/buckets/components/DemoDataDropdown.scss';
 @import 'src/buckets/components/BucketCardMeta.scss';
 @import 'src/shared/components/notifications/Notification.scss';
-
+@import 'src/shared/components/geo/Geo.scss';
+@import 'src/timeMachine/components/view_options/geo/GeoOptions.scss';
 // External
 @import '../../node_modules/@influxdata/react-custom-scrollbars/dist/styles.css';
 

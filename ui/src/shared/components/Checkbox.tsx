@@ -1,8 +1,8 @@
 // Libraries
-import React, {FC} from 'react'
+import React, {FC, ReactNode} from 'react'
 
 interface Props {
-  label: string
+  label: ReactNode | string
   checked: boolean
   onSetChecked: (checked: boolean) => void
   testID?: string

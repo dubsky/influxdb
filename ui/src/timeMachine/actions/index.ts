@@ -39,6 +39,7 @@ import {
 } from 'src/types'
 import {Color} from 'src/types/colors'
 import {HistogramPosition, LinePosition} from '@influxdata/giraffe'
+import {GeoChartAction} from 'src/timeMachine/components/view_options/geo/geoActions'
 
 export type Action =
   | QueryBuilderAction
@@ -92,6 +93,7 @@ export type Action =
   | SetXAxisLabelAction
   | SetShadeBelowAction
   | ReturnType<typeof toggleVisOptions>
+  | GeoChartAction
 
 type ExternalActions =
   | ReturnType<typeof loadBuckets>

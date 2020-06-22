@@ -24,6 +24,7 @@ import {
   QueryViewProperties,
   Theme,
 } from 'src/types'
+import {providesViewVariablesAfterRender} from 'src/shared/components/views/loadingStyle'
 
 interface OwnProps {
   manualRefresh: number
@@ -66,12 +67,13 @@ class RefreshingView extends PureComponent<Props, State> {
   public render() {
     const {ranges, properties, manualRefresh, timeZone, theme} = this.props
     const {submitToken} = this.state
-
+    const shouldWait = providesViewVariablesAfterRender(properties)
     return (
       <TimeSeries
         submitToken={submitToken}
         queries={this.queries}
         key={manualRefresh}
+        shouldWaitForViewVariables={shouldWait}
       >
         {({
           giraffeResult,
@@ -80,7 +82,25 @@ class RefreshingView extends PureComponent<Props, State> {
           errorMessage,
           isInitialFetch,
           statuses,
+          onViewVariablesReady,
         }) => {
+          const viewSwitcher = () => (
+            <ViewSwitcher
+              files={files}
+              giraffeResult={
+                giraffeResult || {table: null, fluxGroupKeyUnion: null}
+              }
+              properties={properties}
+              timeRange={ranges}
+              statuses={statuses}
+              timeZone={timeZone}
+              theme={theme}
+              onViewVariablesReady={onViewVariablesReady}
+              isInConfigurationMode={false}
+            />
+          )
+          if (providesViewVariablesAfterRender(properties))
+            return viewSwitcher()
           return (
             <>
               <ViewLoadingSpinner loading={loading} />
@@ -93,15 +113,7 @@ class RefreshingView extends PureComponent<Props, State> {
                 queries={this.queries}
                 fallbackNote={this.fallbackNote}
               >
-                <ViewSwitcher
-                  files={files}
-                  giraffeResult={giraffeResult}
-                  properties={properties}
-                  timeRange={ranges}
-                  statuses={statuses}
-                  timeZone={timeZone}
-                  theme={theme}
-                />
+                {viewSwitcher()}
               </EmptyQueryView>
             </>
           )
@@ -116,6 +128,7 @@ class RefreshingView extends PureComponent<Props, State> {
     switch (properties.type) {
       case 'single-stat':
       case 'gauge':
+      case 'geo':
         return [properties.queries[0]]
       default:
         return properties.queries

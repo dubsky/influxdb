@@ -1,4 +1,10 @@
-import {View as GenView, Axis, ViewProperties, DashboardQuery} from 'src/client'
+import {
+  View as GenView,
+  Axis,
+  ViewProperties,
+  DashboardQuery,
+  DashboardColor,
+} from 'src/client'
 import {RemoteDataState} from 'src/types'
 
 export interface View<T extends ViewProperties = ViewProperties>
@@ -33,3 +39,7 @@ export type QueryView = WorkingView<QueryViewProperties>
 // specific interface we know forces it to be a certain subset of
 // ViewProperties.
 export type ExtractWorkingView<T> = WorkingView<Extract<QueryViewProperties, T>>
+
+export type ColoredViewProperties = {
+  colors: DashboardColor[]
+}

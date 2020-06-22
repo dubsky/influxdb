@@ -40,7 +40,6 @@ export default class EmptyQueryView extends PureComponent<Props> {
       hasResults,
       errorFormat,
     } = this.props
-
     if (
       loading === RemoteDataState.NotStarted ||
       (queries && !queries.length)

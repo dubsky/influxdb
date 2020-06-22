@@ -375,6 +375,7 @@ const (
 	ViewPropertyTypeSingleStatPlusLine = "line-plus-single-stat"
 	ViewPropertyTypeTable              = "table"
 	ViewPropertyTypeXY                 = "xy"
+	ViewPropertyTypeGeo                = "geo"
 )
 
 // ViewProperties is used to mark other structures as conforming to a View.
@@ -442,6 +443,13 @@ func UnmarshalViewPropertiesJSON(b []byte) (ViewProperties, error) {
 				return nil, err
 			}
 			vis = gv
+		case ViewPropertyTypeGeo:
+			var gvw GeoViewProperties
+			if err := json.Unmarshal(v.B, &gvw); err != nil {
+				fmt.Printf("Unmarshaling geo view failed. %+v", err)
+				return nil, err
+			}
+			vis = gvw
 		case ViewPropertyTypeTable:
 			var tv TableViewProperties
 			if err := json.Unmarshal(v.B, &tv); err != nil {
@@ -528,6 +536,14 @@ func MarshalViewPropertiesJSON(v ViewProperties) ([]byte, error) {
 			Shape: "chronograf-v2",
 
 			GaugeViewProperties: vis,
+		}
+	case GeoViewProperties:
+		s = struct {
+			Shape string `json:"shape"`
+			GeoViewProperties
+		}{
+			Shape: "chronograf-v2",
+			GeoViewProperties: vis,
 		}
 	case XYViewProperties:
 		s = struct {
@@ -815,6 +831,40 @@ type TableViewProperties struct {
 	ShowNoteWhenEmpty bool             `json:"showNoteWhenEmpty"`
 }
 
+// Geographical coordinates
+type Datum struct {
+    Lat               float64          `json:"lat"`
+    Lon               float64          `json:"lon"`
+}
+// Single visualization layer properties of a chronograf map widget
+type GeoLayer struct {
+	Type                  string           `json:"type"`
+	RadiusField           string           `json:"radiusField"`
+	ColorField            string           `json:"colorField"`
+	IntensityField        string           `json:"intensityField"`
+    // circle layer properties
+	ViewColors            []ViewColor      `json:"colors"`
+	Radius                int32            `json:"radius"`
+	Blur                  int32            `json:"blur"`
+	RadiusDimension       Axis             `json:"radiusDimension"`
+	ColorDimension        Axis             `json:"colorDimension"`
+	IntensityDimension    Axis             `json:"intensityDimension"`
+	InterpolateColors     bool             `json:"interpolateColors"`
+}
+// GeoViewProperties represents options for map view in Chronograf
+type GeoViewProperties struct {
+	Type                   string             `json:"type"`
+	Queries                []DashboardQuery   `json:"queries"`
+	Center                 Datum              `json:"center"`
+	Zoom                   float64            `json:"zoom"`
+	AllowPanAndZoom        bool               `json:"allowPanAndZoom"`
+	DetectCoordinateFields bool               `json:"detectCoordinateFields"`
+	ViewColor              []ViewColor        `json:"colors"`
+	GeoLayers              []GeoLayer         `json:"layers"`
+	Note                   string             `json:"note"`
+	ShowNoteWhenEmpty      bool               `json:"showNoteWhenEmpty"`
+}
+
 type MarkdownViewProperties struct {
 	Type string `json:"type"`
 	Note string `json:"note"`
@@ -847,6 +897,7 @@ func (HistogramViewProperties) viewProperties()      {}
 func (HeatmapViewProperties) viewProperties()        {}
 func (ScatterViewProperties) viewProperties()        {}
 func (GaugeViewProperties) viewProperties()          {}
+func (GeoViewProperties) viewProperties()            {}
 func (TableViewProperties) viewProperties()          {}
 func (MarkdownViewProperties) viewProperties()       {}
 func (LogViewProperties) viewProperties()            {}
@@ -859,6 +910,7 @@ func (v HistogramViewProperties) GetType() string      { return v.Type }
 func (v HeatmapViewProperties) GetType() string        { return v.Type }
 func (v ScatterViewProperties) GetType() string        { return v.Type }
 func (v GaugeViewProperties) GetType() string          { return v.Type }
+func (v GeoViewProperties) GetType() string            { return v.Type }
 func (v TableViewProperties) GetType() string          { return v.Type }
 func (v MarkdownViewProperties) GetType() string       { return v.Type }
 func (v LogViewProperties) GetType() string            { return v.Type }

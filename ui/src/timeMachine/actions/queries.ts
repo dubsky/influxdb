@@ -138,10 +138,9 @@ export const executeQueries = (abortController?: AbortController) => async (
 
     await dispatch(hydrateVariables())
 
-    const variableAssignments = getAllVariables(state)
+    const variableAssignments = getAllVariables(getState())
       .map(v => asAssignment(v))
       .filter(v => !!v)
-
     // keeping getState() here ensures that the state we are working with
     // is the most current one. By having this set to state, we were creating a race
     // condition that was causing the following bug:

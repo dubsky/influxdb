@@ -1,8 +1,7 @@
 // Libraries
 import {get} from 'lodash'
-
 // Utils
-import {getActiveQuery} from 'src/timeMachine/selectors'
+import {getActiveQuery, getActiveTimeMachine} from 'src/timeMachine/selectors'
 import {getRangeVariable} from 'src/variables/utils/getTimeRangeVars'
 import {getTimeRange, getTimeRangeWithTimezone} from 'src/dashboards/selectors'
 import {getWindowPeriodVariable} from 'src/variables/utils/getWindowVars'
@@ -12,16 +11,20 @@ import {
   WINDOW_PERIOD,
 } from 'src/variables/constants'
 import {currentContext} from 'src/shared/selectors/currentContext'
-
 // Types
 import {
-  RemoteDataState,
+  AppState,
+  CSVArguments,
   MapArguments,
   QueryArguments,
-  CSVArguments,
+  RemoteDataState,
+  Variable,
+  VariableArgumentType,
 } from 'src/types'
 import {VariableAssignment} from 'src/types/ast'
-import {AppState, VariableArgumentType, Variable} from 'src/types'
+import {GEO_VARIABLES} from 'src/shared/components/geo/GeoChart'
+import produce from 'immer'
+import {TimeMachineState} from 'src/timeMachine/reducers'
 
 export const extractVariableEditorName = (state: AppState): string => {
   return state.variableEditor.name
@@ -98,6 +101,51 @@ export const getVariables = (
   return vars
 }
 
+enum ViewVariableNames {
+  GEO_VIEW_LON = 'geo-view-lon',
+  GEO_VIEW_LAT = 'geo-view-lat',
+  GEO_VIEW_RADIUS = 'radius',
+}
+
+const getViewVariablesIDs = (state: AppState): string[] => {
+  const timeMachine = getActiveTimeMachine(state)
+  const type = timeMachine.view.properties.type
+  switch (type) {
+    case 'geo':
+      return [
+        ViewVariableNames.GEO_VIEW_LON,
+        ViewVariableNames.GEO_VIEW_LAT,
+        ViewVariableNames.GEO_VIEW_RADIUS,
+      ]
+    default:
+      return []
+  }
+}
+
+const buildViewVariable = (id, name) => ({
+  orgID: '',
+  id: id,
+  name: name,
+  status: RemoteDataState.Done,
+  labels: [],
+  arguments: {type: 'system'},
+})
+
+const VIEW_VARIABLES = {
+  [ViewVariableNames.GEO_VIEW_LON]: buildViewVariable(
+    ViewVariableNames.GEO_VIEW_LON,
+    GEO_VARIABLES.LON
+  ),
+  [ViewVariableNames.GEO_VIEW_LAT]: buildViewVariable(
+    ViewVariableNames.GEO_VIEW_LAT,
+    GEO_VARIABLES.LAT
+  ),
+  [ViewVariableNames.GEO_VIEW_RADIUS]: buildViewVariable(
+    ViewVariableNames.GEO_VIEW_RADIUS,
+    GEO_VARIABLES.RADIUS
+  ),
+}
+
 // the same as the above method, but includes system
 // variables
 export const getAllVariables = (
@@ -106,12 +154,29 @@ export const getAllVariables = (
 ): Variable[] => {
   const vars = getUserVariableNames(state, contextID || currentContext(state))
     .concat([TIME_RANGE_START, TIME_RANGE_STOP, WINDOW_PERIOD])
+    .concat(getViewVariablesIDs(state))
     .reduce((prev, curr) => {
       prev.push(getVariable(state, curr))
       return prev
     }, [])
     .filter(v => !!v)
   return vars
+}
+
+const getStateViewVariableValue = (
+  timeMachineState: TimeMachineState,
+  variableID: string
+) => {
+  const {viewVariablesAssignment} = timeMachineState
+  if (viewVariablesAssignment) {
+    const assignment = viewVariablesAssignment.find(
+      assignment => assignment.id.name === variableID
+    )
+    if (assignment && assignment.init.type === 'FloatLiteral') {
+      return assignment.init.value
+    }
+  }
+  return null
 }
 
 export const sortVariablesByName = (variables: Variable[]): Variable[] =>
@@ -151,6 +216,15 @@ export const getVariable = (state: AppState, variableID: string): Variable => {
     }, timeVars)
 
     vari = (getWindowPeriodVariable(text, assignments) || [])[0]
+  }
+
+  if (!vari && VIEW_VARIABLES[variableID]) {
+    vari = produce(VIEW_VARIABLES[variableID], draft => {
+      draft.arguments.values = getStateViewVariableValue(
+        getActiveTimeMachine(state),
+        VIEW_VARIABLES[variableID].name
+      )
+    })
   }
 
   if (!vari) {
@@ -204,6 +278,13 @@ export const asAssignment = (variable: Variable): VariableAssignment => {
     },
   } as VariableAssignment
 
+  if (variable.arguments.type === 'system') {
+    out.init = {
+      type: 'FloatLiteral',
+      value: variable.arguments.values,
+    }
+  }
+
   if (variable.id === WINDOW_PERIOD) {
     out.init = {
       type: 'DurationLiteral',
@@ -239,7 +320,6 @@ export const asAssignment = (variable: Variable): VariableAssignment => {
         },
       }
     }
-
     return out
   }
 
@@ -276,6 +356,8 @@ export const asAssignment = (variable: Variable): VariableAssignment => {
       }
     }
   }
+
+  if (!out.init) return null
 
   return out
 }

@@ -3,6 +3,7 @@ import {ViewType} from 'src/types'
 interface VisType {
   type: ViewType
   name: string
+  featureFlagDriven?: boolean
 }
 
 export const VIS_TYPES: VisType[] = [
@@ -37,5 +38,10 @@ export const VIS_TYPES: VisType[] = [
   {
     type: 'scatter',
     name: 'Scatter',
+  },
+  {
+    type: 'geo',
+    name: 'Map',
+    featureFlagDriven: true,
   },
 ]

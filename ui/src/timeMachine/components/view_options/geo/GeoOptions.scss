@@ -1,0 +1,54 @@
+.geo-options {
+  .color-transition.checkbox {
+    padding-top: 0.5em;
+    padding-bottom: 1em;
+  }
+
+  .movement.checkbox {
+    padding-bottom: 1em;
+  }
+
+  .settings {
+    padding-top: 1em;
+    padding-left: 0;
+  }
+
+  .color-thresholds-header {
+    margin-top: 2em;
+  }
+
+  .grouping.checkbox label {
+    display: block;
+  }
+
+  .removeLayerButton {
+    display: inline-block;
+    position: relative;
+    float: right;
+    text-transform: uppercase;
+    top: 4px;
+    font-size: 10px;
+    border: 1px solid #a9a9a945;
+    padding: 5px;
+    line-height: 10px;
+    height: auto;
+  }
+
+  .locationButton {
+    display: block;
+    font-size: 10px;
+    border: 1px solid #a9a9a945;
+    padding: 5px;
+    line-height: 10px;
+    height: auto;
+    &:after {
+      background: none;
+    }
+    &.active {
+      float: right;
+      padding: 4px;
+      position: relative;
+      top: -3px;
+    }
+  }
+}
