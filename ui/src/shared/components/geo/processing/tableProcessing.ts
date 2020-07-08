@@ -25,6 +25,9 @@ export const QUERY_META_COLUMNS = [
   '_stop',
 ]
 
+export const TIME_COLUMN = '_time'
+export const START_COLUMN = '_start'
+export const STOP_COLUMN = '_stop'
 export const LON_COLUMN = 'lon'
 export const LAT_COLUMN = 'lat'
 export const GEO_HASH_COLUMN = 's2_cell_id'

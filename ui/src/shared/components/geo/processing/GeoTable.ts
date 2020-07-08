@@ -10,6 +10,8 @@ export interface GeoTable {
 
   getLatLon(index: number): LatLon
 
+  getTimeString(index: number): string
+
   isTruncated(): boolean
 }
 

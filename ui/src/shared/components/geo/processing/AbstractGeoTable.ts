@@ -5,6 +5,9 @@ import {S2LatLng} from '@raha.group/s2-geometry'
 import {
   LAT_COLUMN,
   LON_COLUMN,
+  START_COLUMN,
+  STOP_COLUMN,
+  TIME_COLUMN,
 } from 'src/shared/components/geo/processing/tableProcessing'
 
 // Types
@@ -48,7 +51,24 @@ export abstract class AbstractGeoTable implements GeoTable {
       }
     }
   }
+
+  getTimeString(index: number): string {
+    const timeValue = this.getValue(index, TIME_COLUMN)
+    if (timeValue) {
+      return timestampToString(timeValue)
+    } else {
+      const startValue = this.getValue(index, START_COLUMN)
+      const stopValue = this.getValue(index, STOP_COLUMN)
+      if (startValue && stopValue) {
+        return `${timestampToString(startValue)} - ${timestampToString(stopValue)}`
+      }
+      const value = startValue || stopValue
+      if(value) return timestampToString(value)
+    }
+  }
 }
+
+const timestampToString = (timeValue) => new Date(timeValue).toLocaleString()
 
 const PRECISION_TRIMMING_TABLE = [BigInt(1)]
 for (let i = 1; i < 17; i++) {
