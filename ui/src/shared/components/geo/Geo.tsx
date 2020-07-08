@@ -24,6 +24,9 @@ import HeatmapLayer from 'src/shared/components/geo/HeatmapLayer'
 import PointMapLayer from 'src/shared/components/geo/PointMapLayer'
 import {GeoTable} from 'src/shared/components/geo/processing/GeoTable'
 
+// Constants
+const ZOOM_FRACTION = 8
+
 interface Props {
   width: number
   height: number
@@ -112,6 +115,16 @@ class Geo extends PureComponent<Props, State> {
     )
   }
 
+  private getMinZoom(width: number): number {
+    // Math.max(Math.log2(width/256)),Math.log2(height/256))
+    // while the formula above would be technically correct, problem is that
+    // web map projection is square (as opposed to regular book based world maps).
+    // The polar areas are extremely distorted and people don't
+    // want to look at those - they usually want to see all the continents and
+    // expect to see a rectangle, similar to book based maps.
+    return Math.ceil(Math.log2(width / 256) * ZOOM_FRACTION) / ZOOM_FRACTION
+  }
+
   public render() {
     const {width, height} = this.props
     if (width === 0 || height === 0) return null
@@ -127,13 +140,16 @@ class Geo extends PureComponent<Props, State> {
         }}
         center={{lat, lon}}
         zoom={zoom}
+        minZoom={this.getMinZoom(width)}
+        zoomDelta={1}
+        zoomSnap={1 / ZOOM_FRACTION}
         onViewportChanged={this.onViewportChange}
         dragging={this.props.isViewportEditable}
         zoomControl={this.props.isViewportEditable}
         scrollWheelZoom={this.props.isViewportEditable}
         attributionControl={false}
       >
-        <TileLayer url={tileServerUrl} />
+        <TileLayer url={tileServerUrl} minNativeZoom={3}/>
         {layers.map((layer, index) => {
           if (!preprocessedTable) return
           switch (layer.type) {
