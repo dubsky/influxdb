@@ -79,7 +79,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
     }
   }
 
-  private calculateVariableAssignment(
+  private static calculateVariableAssignment(
     width: number,
     height: number,
     lon: number,
@@ -145,7 +145,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
         lonOnLastRender !== lon ||
         zoomOnLastRender !== zoom)
     ) {
-      const variableAssignment = this.calculateVariableAssignment(
+      const variableAssignment = GeoChart.calculateVariableAssignment(
         width,
         height,
         lon,

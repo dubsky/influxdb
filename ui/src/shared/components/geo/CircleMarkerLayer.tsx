@@ -36,12 +36,13 @@ const formatRowInfo = (
 ) => {
   const result = []
   const timeValue = table.getTimeString(index)
-  if (timeValue) result.push({
-    key: '_time',
-    name: 'Time',
-    type: 'string',
-    values: [timeValue],
-  })
+  if (timeValue)
+    result.push({
+      key: '_time',
+      name: 'Time',
+      type: 'string',
+      values: [timeValue],
+    })
   const {colorField, radiusField} = properties
   const radiusValue = table.getValue(index, radiusField)
   const {radiusDimension} = properties

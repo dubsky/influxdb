@@ -60,15 +60,17 @@ export abstract class AbstractGeoTable implements GeoTable {
       const startValue = this.getValue(index, START_COLUMN)
       const stopValue = this.getValue(index, STOP_COLUMN)
       if (startValue && stopValue) {
-        return `${timestampToString(startValue)} - ${timestampToString(stopValue)}`
+        return `${timestampToString(startValue)} - ${timestampToString(
+          stopValue
+        )}`
       }
       const value = startValue || stopValue
-      if(value) return timestampToString(value)
+      if (value) return timestampToString(value)
     }
   }
 }
 
-const timestampToString = (timeValue) => new Date(timeValue).toLocaleString()
+const timestampToString = timeValue => new Date(timeValue).toLocaleString()
 
 const PRECISION_TRIMMING_TABLE = [BigInt(1)]
 for (let i = 1; i < 17; i++) {

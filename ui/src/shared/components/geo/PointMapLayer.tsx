@@ -29,23 +29,24 @@ interface Props {
 const formatRowInfo = (
   properties: GeoPointMapViewLayer,
   table: GeoTable,
-  index,
+  index
 ) => {
   const result = []
   const timeValue = table.getTimeString(index)
-  if (timeValue) result.push({
-    key: '_time',
-    name: 'Time',
-    type: 'string',
-    values: [timeValue],
-  })
+  if (timeValue)
+    result.push({
+      key: '_time',
+      name: 'Time',
+      type: 'string',
+      values: [timeValue],
+    })
   const colorValue = table.getValue(index, properties.colorField)
   const {colorDimension} = properties
   const colorInfo = formatValue(
     properties.colorField,
     'Color',
     colorValue,
-    colorDimension,
+    colorDimension
   )
   if (colorInfo) result.push(colorInfo)
   return result
