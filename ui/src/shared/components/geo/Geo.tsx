@@ -2,7 +2,8 @@
 import React, {createRef, PureComponent} from 'react'
 import {Config} from '@influxdata/giraffe/dist'
 import {Table} from '@influxdata/giraffe'
-import {Map, TileLayer} from 'react-leaflet'
+import {Map, TileLayer, LayersControl} from 'react-leaflet'
+import {BingLayer} from 'react-leaflet-bing'
 import Control from 'react-leaflet-control'
 import 'leaflet/dist/leaflet.css'
 
@@ -39,7 +40,8 @@ interface Props {
   onViewportChange: (lat: number, lon: number, zoom: number) => void
   layers: GeoViewLayer[]
   stylingConfig: Partial<Config>
-  tileServerUrl: string
+  tileServerUrl?: string
+  bingKey?: string
 }
 
 interface State {}
@@ -115,7 +117,7 @@ class Geo extends PureComponent<Props, State> {
     )
   }
 
-  private getMinZoom(width: number): number {
+  private static getMinZoom(width: number): number {
     // Math.max(Math.log2(width/256)),Math.log2(height/256))
     // while the formula above would be technically correct, problem is that
     // web map projection is square (as opposed to regular book based world maps).
@@ -129,7 +131,7 @@ class Geo extends PureComponent<Props, State> {
     const {width, height} = this.props
     if (width === 0 || height === 0) return null
     const {lat, lon, zoom, stylingConfig} = this.props
-    const {layers, tileServerUrl} = this.props
+    const {layers, tileServerUrl, bingKey} = this.props
     const {preprocessedTable} = this
     return (
       <Map
@@ -140,7 +142,7 @@ class Geo extends PureComponent<Props, State> {
         }}
         center={{lat, lon}}
         zoom={zoom}
-        minZoom={this.getMinZoom(width)}
+        minZoom={Geo.getMinZoom(width)}
         zoomDelta={1}
         zoomSnap={1 / ZOOM_FRACTION}
         onViewportChanged={this.onViewportChange}
@@ -149,7 +151,26 @@ class Geo extends PureComponent<Props, State> {
         scrollWheelZoom={this.props.isViewportEditable}
         attributionControl={false}
       >
-        <TileLayer url={tileServerUrl} minNativeZoom={3}/>
+        {bingKey ? (
+          <LayersControl position="topright">
+            <LayersControl.BaseLayer checked name="Roads">
+              <BingLayer minNativeZoom={3} bingkey={bingKey} type="Road" />
+            </LayersControl.BaseLayer>
+            <LayersControl.BaseLayer name="Satellite (Plain)">
+              <BingLayer minNativeZoom={3} bingkey={bingKey} />
+            </LayersControl.BaseLayer>
+            <LayersControl.BaseLayer name="Satellite (Labels)">
+              <BingLayer
+                minNativeZoom={3}
+                bingkey={bingKey}
+                type="AerialWithLabels"
+              />
+            </LayersControl.BaseLayer>
+          </LayersControl>
+        ) : (
+          <TileLayer minNativeZoom={3} url={tileServerUrl} />
+        )}
+
         {layers.map((layer, index) => {
           if (!preprocessedTable) return
           switch (layer.type) {

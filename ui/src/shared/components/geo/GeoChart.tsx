@@ -10,6 +10,7 @@ import Geo from 'src/shared/components/geo/Geo'
 // Types
 import {GeoViewProperties} from 'src/types/dashboards'
 import {AppState, Theme} from 'src/types'
+import {VariableAssignment} from 'src/types'
 
 // Utils
 import {ErrorHandling} from 'src/shared/decorators/errors'
@@ -18,13 +19,16 @@ import {
   setViewVariableAssignment,
 } from 'src/timeMachine/components/view_options/geo/geoActions'
 import {getActiveTimeMachine} from 'src/timeMachine/selectors'
+import {
+  getTileServerConfigurations,
+  loadTileServerSecret,
+  TileServerConfigurations,
+} from 'src/shared/components/geo/tileServer'
+import {executeQueries} from 'src/timeMachine/actions/queries'
+import {getOrg} from 'src/organizations/selectors'
 
 // Constants
 import {VIS_THEME, VIS_THEME_LIGHT} from 'src/shared/constants'
-import {VariableAssignment} from 'src/types'
-import {executeQueries} from 'src/timeMachine/actions/queries'
-import {getTileServerSecret, loadTileServerSecret} from './tileServer'
-import {getOrg} from '../../../organizations/selectors'
 
 export enum GEO_VARIABLES {
   LON = 'lon',
@@ -52,7 +56,7 @@ interface DispatchProps {
 }
 
 interface State {
-  tileServerUrl: string
+  tileServerConfiguration: TileServerConfigurations
 }
 
 @ErrorHandling
@@ -66,11 +70,11 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
 
   constructor(props) {
     super(props)
-    const tileServerUrl = getTileServerSecret()
-    this.state = {tileServerUrl}
-    if (!tileServerUrl) {
-      loadTileServerSecret(this.props.orgID).then(url => {
-        this.setState({tileServerUrl: url})
+    const configuration = getTileServerConfigurations()
+    this.state = {tileServerConfiguration: configuration}
+    if (!configuration) {
+      loadTileServerSecret(this.props.orgID).then(configuration => {
+        this.setState({tileServerConfiguration: configuration})
       })
     }
   }
@@ -214,14 +218,15 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
           layers={layers}
           stylingConfig={config}
           onViewportChange={onViewportChange}
-          tileServerUrl={this.state.tileServerUrl}
+          tileServerUrl={this.state.tileServerConfiguration.tileServerUrl}
+          bingKey={this.state.tileServerConfiguration.bingKey}
         />
       </div>
     )
   }
 
   public render() {
-    if (this.state.tileServerUrl) {
+    if (this.state.tileServerConfiguration) {
       return <AutoSizer>{this.onAutoResize.bind(this)}</AutoSizer>
     }
     return null
