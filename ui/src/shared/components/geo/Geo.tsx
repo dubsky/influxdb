@@ -2,8 +2,8 @@
 import React, {createRef, PureComponent} from 'react'
 import {Config} from '@influxdata/giraffe/dist'
 import {Table} from '@influxdata/giraffe'
+import BingLayer from './bing-maps/Bing'
 import {Map, TileLayer, LayersControl} from 'react-leaflet'
-import {BingLayer} from 'react-leaflet-bing'
 import Control from 'react-leaflet-control'
 import 'leaflet/dist/leaflet.css'
 
@@ -164,6 +164,13 @@ class Geo extends PureComponent<Props, State> {
                 minNativeZoom={3}
                 bingkey={bingKey}
                 type="AerialWithLabels"
+              />
+            </LayersControl.BaseLayer>
+            <LayersControl.BaseLayer name="Dark mode">
+              <BingLayer
+                minNativeZoom={3}
+                bingkey={bingKey}
+                type="CanvasDark"
               />
             </LayersControl.BaseLayer>
           </LayersControl>

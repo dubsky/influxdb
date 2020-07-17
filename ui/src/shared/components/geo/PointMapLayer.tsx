@@ -2,7 +2,9 @@
 import React from 'react'
 import {createRef, FunctionComponent, useLayoutEffect} from 'react'
 import {Marker} from 'react-leaflet'
+import MarkerClusterGroup from 'react-leaflet-markercluster'
 import {Config} from '@influxdata/giraffe/dist'
+import 'react-leaflet-markercluster/dist/styles.min.css'
 
 // Utils
 import {getColor} from 'src/shared/components/geo/dimensionCalculations'
@@ -85,7 +87,7 @@ export const PointMapLayer: FunctionComponent<Props> = props => {
   )
   return (
     <>
-      {result}
+      <MarkerClusterGroup>{result}</MarkerClusterGroup>
       {tooltip}
     </>
   )
