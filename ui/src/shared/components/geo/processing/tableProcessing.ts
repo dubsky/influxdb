@@ -17,10 +17,11 @@ import {EmptyGeoTable} from './EmptyGeoTable'
 // Constants
 export const FIELD_COLUMN = '_field'
 export const VALUE_COLUMN = '_value'
+export const TABLE_COLUMN = 'table'
 export const QUERY_META_COLUMNS = [
   FIELD_COLUMN,
   VALUE_COLUMN,
-  'table',
+  TABLE_COLUMN,
   '_start',
   '_stop',
 ]

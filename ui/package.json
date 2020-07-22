@@ -182,6 +182,7 @@
     "react-dom": "^16.8.2",
     "react-grid-layout": "^0.16.6",
     "react-leaflet": "^2.6.3",
+    "react-leaflet-ant-path": "^1.1.0",
     "react-leaflet-control": "^2.1.2",
     "react-leaflet-heatmap-layer": "^2.0.0",
     "react-leaflet-markercluster": "^2.0.0",

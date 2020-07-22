@@ -11,7 +11,11 @@ import {
 } from 'src/shared/components/geo/processing/tableProcessing'
 
 // Types
-import {GeoTable, LatLon} from 'src/shared/components/geo/processing/GeoTable'
+import {
+  GeoTable,
+  LatLon,
+  Track,
+} from 'src/shared/components/geo/processing/GeoTable'
 
 export enum CoordinateEncoding {
   GEO_HASH,
@@ -32,6 +36,13 @@ export abstract class AbstractGeoTable implements GeoTable {
   abstract getS2CellID(index: number): string
 
   abstract isTruncated(): boolean
+
+  mapTracks<T, U>(
+    _mapper: (track: Track, options: U, index: number) => T,
+    _options: U
+  ): T[] {
+    return []
+  }
 
   getLatLon(index: number): LatLon {
     if (this.coordinateEncoding === CoordinateEncoding.FIELDS) {

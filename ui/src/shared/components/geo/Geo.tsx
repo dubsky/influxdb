@@ -2,7 +2,7 @@
 import React, {createRef, PureComponent} from 'react'
 import {Config} from '@influxdata/giraffe/dist'
 import {Table} from '@influxdata/giraffe'
-import BingLayer from './bing-maps/Bing'
+import BingLayer from 'src/shared/components/geo/bing-maps/Bing'
 import {Map, TileLayer, LayersControl} from 'react-leaflet'
 import Control from 'react-leaflet-control'
 import 'leaflet/dist/leaflet.css'
@@ -19,10 +19,12 @@ import {
   GeoCircleViewLayer,
   GeoHeatMapViewLayer,
   GeoPointMapViewLayer,
+  GeoTrackMapViewLayer,
   GeoViewLayer,
 } from 'src/client'
 import HeatmapLayer from 'src/shared/components/geo/HeatmapLayer'
 import PointMapLayer from 'src/shared/components/geo/PointMapLayer'
+import TrackMapLayer from 'src/shared/components/geo/TrackMapLayer'
 import {GeoTable} from 'src/shared/components/geo/processing/GeoTable'
 
 // Constants
@@ -77,6 +79,8 @@ class Geo extends PureComponent<Props, State> {
           case 'heatmap':
             return 100000
           case 'pointMap':
+            return 2000
+          case 'trackMap':
             return 2000
         }
       })
@@ -213,6 +217,21 @@ class Geo extends PureComponent<Props, State> {
                   colorFieldName={pointMapLayer.colorField}
                   table={preprocessedTable}
                   properties={pointMapLayer}
+                  stylingConfig={stylingConfig}
+                  isClustered={
+                    pointMapLayer.isClustered === undefined
+                      ? true
+                      : pointMapLayer.isClustered
+                  }
+                />
+              )
+            case 'trackMap':
+              const trackMapLayer = layer as GeoTrackMapViewLayer
+              return (
+                <TrackMapLayer
+                  key={index}
+                  table={preprocessedTable}
+                  properties={trackMapLayer}
                   stylingConfig={stylingConfig}
                 />
               )

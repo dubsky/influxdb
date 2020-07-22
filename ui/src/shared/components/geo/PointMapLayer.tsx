@@ -26,6 +26,7 @@ interface Props {
   colorFieldName: string
   properties: GeoPointMapViewLayer
   stylingConfig: Partial<Config>
+  isClustered: boolean
 }
 
 const formatRowInfo = (
@@ -55,7 +56,7 @@ const formatRowInfo = (
 }
 
 export const PointMapLayer: FunctionComponent<Props> = props => {
-  const {table, colorFieldName, properties, stylingConfig} = props
+  const {table, colorFieldName, properties, stylingConfig, isClustered} = props
   const rowCount = table.getRowCount()
   const result = [],
     tooltips = []
@@ -87,7 +88,7 @@ export const PointMapLayer: FunctionComponent<Props> = props => {
   )
   return (
     <>
-      <MarkerClusterGroup>{result}</MarkerClusterGroup>
+      {isClustered ? <MarkerClusterGroup>{result}</MarkerClusterGroup> : result}
       {tooltip}
     </>
   )

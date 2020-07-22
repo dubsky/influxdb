@@ -12,7 +12,9 @@ import {
   GEO_HASH_COLUMN,
   LAT_COLUMN,
   LON_COLUMN,
+  TABLE_COLUMN,
 } from 'src/shared/components/geo/processing/tableProcessing'
+import {Track} from './GeoTable'
 
 export class NativeGeoTable extends AbstractGeoTable {
   table: Table
@@ -47,6 +49,34 @@ export class NativeGeoTable extends AbstractGeoTable {
 
   isTruncated(): boolean {
     return this.table.length > this.maxRows
+  }
+
+  mapTracks<T, U>(
+    mapper: (track: Track, options: U, index: number) => T,
+    options: U
+  ): T[] {
+    const {table, maxRows} = this
+    const tableColumn = table.getColumn(TABLE_COLUMN)
+    const lonColumn = table.getColumn(LON_COLUMN, 'number')
+    const latColumn = table.getColumn(LAT_COLUMN, 'number')
+
+    const result = []
+    let track: Track = []
+    let index = 0
+    let trackNumber = 0
+    while (index < table.length && index < maxRows) {
+      do {
+        track.push([latColumn[index], lonColumn[index]])
+        index++
+      } while (
+        index < maxRows &&
+        index < table.length &&
+        tableColumn[index] === tableColumn[index + 1]
+      )
+      result.push(mapper(track, options, trackNumber++))
+      track = []
+    }
+    return result
   }
 }
 

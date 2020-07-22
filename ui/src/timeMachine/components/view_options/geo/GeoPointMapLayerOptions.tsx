@@ -1,12 +1,13 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
-import {Form} from '@influxdata/clockface'
+import {Form, Grid} from '@influxdata/clockface'
 
 // Components
 import FieldSelector from 'src/timeMachine/components/view_options/geo/GeoFieldSelector'
 import ThresholdsSettings from 'src/shared/components/ThresholdsSettings'
 import DimensionValueDisplayProperties from 'src/shared/components/geo/DimensionValueDisplayProperties'
+import Checkbox from 'src/shared/components/Checkbox'
 
 // Actions
 import {
@@ -32,7 +33,7 @@ interface DispatchProps {
   onUpdateColors: (colors: Color[], layer: number) => void
   onUpdateField: (
     fieldName: string,
-    field: string | number,
+    field: string | number | boolean,
     layer: number
   ) => void
   onUpdateDimensionProperty: (
@@ -49,10 +50,24 @@ class GeoPointMapLayerOptions extends PureComponent<Props> {
   public render() {
     const {props} = this
     const {columns, layer, id} = props
-    const {colorField, colorDimension, colors} = layer
+    const {colorField, colorDimension, colors, isClustered} = layer
 
     return (
       <>
+        <Grid.Column className={'markerClustering checkbox'}>
+          <Checkbox
+            label="Enable marker clustering"
+            checked={isClustered}
+            onSetChecked={value => {
+              props.onUpdateField(
+                nameOf<GeoPointMapViewLayer>('isClustered'),
+                value,
+                id
+              )
+            }}
+          />
+        </Grid.Column>
+
         <h5 className="view-options--header">Marker Color</h5>
         <Form.Element label="Color column">
           <FieldSelector

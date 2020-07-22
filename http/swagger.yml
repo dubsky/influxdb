@@ -9559,13 +9559,14 @@ components:
         - $ref: "#/components/schemas/GeoCircleViewLayer"
         - $ref: "#/components/schemas/GeoHeatMapViewLayer"
         - $ref: "#/components/schemas/GeoPointMapViewLayer"
+        - $ref: "#/components/schemas/GeoTrackMapViewLayer"
     GeoViewLayerProperties:
       type: object
       required: [type, field, colors]
       properties:
         type:
           type: string
-          enum: [ heatmap, circleMap, pointMap]
+          enum: [ heatmap, circleMap, pointMap, trackMap]
     FieldLegendProperties:
       type: object
       properties:
@@ -9613,6 +9614,29 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/DashboardColor"
+            isClustered:
+              description: Cluster close markers together
+              type: boolean
+    GeoTrackMapViewLayer:
+      allOf:
+        - $ref: "#/components/schemas/GeoViewLayerProperties"
+        - type: object
+          required: [trackWidth, speed, randomColors, trackPointVisualization]
+      properties:
+        trackWidth:
+          description: Width of the track
+          type: integer
+        speed:
+          description: Speed of the track animation
+          type: integer
+        randomColors:
+          description: Assign different colors to different tracks
+          type: boolean
+        colors:
+          description: Colors define color encoding of data into a visualization
+          type: array
+          items:
+             $ref: "#/components/schemas/DashboardColor"
     GeoHeatMapViewLayer:
       allOf:
         - $ref: "#/components/schemas/GeoViewLayerProperties"
@@ -9675,6 +9699,9 @@ components:
           description: If true, search results get automatically regroupped so that lon,lat and value are treated as columns
           type: boolean
           default: true
+        mapStyle:
+          description: Define map type - regular, satellite etc.
+          type: string
         note:
           type: string
         showNoteWhenEmpty:

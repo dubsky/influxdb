@@ -3,6 +3,8 @@ export interface LatLon {
   lat: number
 }
 
+export interface Track extends Array<number[]> {}
+
 export interface GeoTable {
   getValue(index: number, field: string): number
 
@@ -13,6 +15,11 @@ export interface GeoTable {
   getTimeString(index: number): string
 
   isTruncated(): boolean
+
+  mapTracks<T, U>(
+    mapper: (track: Track, options: U, index: number) => T,
+    options: U
+  ): T[]
 }
 
 export interface MinAndMax {

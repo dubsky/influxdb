@@ -27,6 +27,7 @@ import {
   GeoPointMapViewLayer,
   GeoViewLayer,
   GeoViewLayerProperties,
+  GeoTrackMapViewLayer,
 } from 'src/client'
 
 // Components
@@ -35,6 +36,7 @@ import Checkbox from 'src/shared/components/Checkbox'
 import GeoCircleLayerOptions from 'src/timeMachine/components/view_options/geo/GeoCircleLayerOptions'
 import GeoHeatmapLayerOptions from 'src/timeMachine/components/view_options/geo/GeoHeatmapLayerOptions'
 import GeoPointMapLayerOptions from 'src/timeMachine/components/view_options/geo/GeoPointMapLayerOptions'
+import GeoTrackMapLayerOptions from 'src/timeMachine/components/view_options/geo/GeoTrackMapLayerOptions'
 
 // Actions
 import {
@@ -84,6 +86,7 @@ const VISUALIZATION_TYPES = {
   'Circle map': 'circleMap',
   'Point map': 'pointMap',
   Heatmap: 'heatmap',
+  'Track map': 'trackMap',
 }
 
 class GeoOptions extends PureComponent<Props> {
@@ -123,6 +126,14 @@ class GeoOptions extends PureComponent<Props> {
             key={id}
             columns={columns}
             layer={layer as GeoPointMapViewLayer}
+          />
+        )}
+        {layer.type === 'trackMap' && (
+          <GeoTrackMapLayerOptions
+            id={id}
+            key={id}
+            columns={columns}
+            layer={layer as GeoTrackMapViewLayer}
           />
         )}
       </>
