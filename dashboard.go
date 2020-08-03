@@ -850,13 +850,21 @@ type GeoLayer struct {
 	ColorDimension        Axis             `json:"colorDimension"`
 	IntensityDimension    Axis             `json:"intensityDimension"`
 	InterpolateColors     bool             `json:"interpolateColors"`
+    // track layer properties
+    TrackWidth            int32            `json:"trackWidth"`
+    Speed                 int32            `json:"speed"`
+    RandomColors          bool             `json:"randomColors"`
+    // point layer properties
+   	IsClustered           bool             `json:"isClustered"`
 }
+
 // GeoViewProperties represents options for map view in Chronograf
 type GeoViewProperties struct {
 	Type                   string             `json:"type"`
 	Queries                []DashboardQuery   `json:"queries"`
 	Center                 Datum              `json:"center"`
 	Zoom                   float64            `json:"zoom"`
+	MapStyle               string             `json:"mapStyle"`
 	AllowPanAndZoom        bool               `json:"allowPanAndZoom"`
 	DetectCoordinateFields bool               `json:"detectCoordinateFields"`
 	ViewColor              []ViewColor        `json:"colors"`
