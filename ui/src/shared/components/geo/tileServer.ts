@@ -31,6 +31,7 @@ export const loadTileServerSecret = async (
         tileServerUrl: _.get(parsed, 'table.columns.tileServer.data[0]'),
         bingKey: _.get(parsed, 'table.columns.bingKey.data[0]'),
       }
+      console.log('loaded tileServerConfigurations', tileServerConfigurations)
       if (
         tileServerConfigurations.tileServerUrl ||
         tileServerConfigurations.bingKey

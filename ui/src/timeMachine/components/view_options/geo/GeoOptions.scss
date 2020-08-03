@@ -52,8 +52,12 @@
     }
   }
 
-  .trackColor.checkbox {
+  .markerClustering.checkbox, .trackColor.checkbox {
     padding-bottom: 1em;
+  }
+
+  .mapStyle {
+    padding-top: 1em;
   }
 
 }

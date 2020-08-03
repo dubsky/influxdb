@@ -42,6 +42,6 @@ export const VIS_TYPES: VisType[] = [
   {
     type: 'geo',
     name: 'Map',
-    featureFlagDriven: true,
+    //featureFlagDriven: true,
   },
 ]

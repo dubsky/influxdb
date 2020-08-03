@@ -57,7 +57,7 @@ class GeoPointMapLayerOptions extends PureComponent<Props> {
         <Grid.Column className={'markerClustering checkbox'}>
           <Checkbox
             label="Enable marker clustering"
-            checked={isClustered}
+            checked={isClustered === true}
             onSetChecked={value => {
               props.onUpdateField(
                 nameOf<GeoPointMapViewLayer>('isClustered'),

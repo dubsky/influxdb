@@ -45,6 +45,16 @@ export const setAllowPanAndZoom = (
   payload: {allowPanAndZoom},
 })
 
+interface SetMapStyle {
+  type: 'SET_MAP_STYLE'
+  payload: {mapStyle: string}
+}
+
+export const setMapStyle = (mapStyle: string): SetMapStyle => ({
+  type: 'SET_MAP_STYLE',
+  payload: {mapStyle},
+})
+
 interface SetDetectCoordinateFields {
   type: 'SET_DETECT_COORDINATE_FIELDS'
   payload: {detectCoordinateFields: boolean}
@@ -73,12 +83,12 @@ export const setViewport = (
 
 interface SetField {
   type: 'SET_FIELD'
-  payload: {fieldName: string; field: string; layer: number}
+  payload: {fieldName: string; field: string | number | boolean; layer: number}
 }
 
 export const setField = (
   fieldName: string,
-  field: string,
+  field: string | number | boolean,
   layer: number
 ): SetField => ({
   type: 'SET_FIELD',
@@ -169,6 +179,7 @@ export type GeoChartAction =
   | AddGeoLayer
   | RemoveGeoLayer
   | SetViewVariableAssignment
+  | SetMapStyle
 
 const GEO_ACTIONS = [
   'SET_VIEW_VARIABLE_ASSIGNMENT',
@@ -184,6 +195,7 @@ const GEO_ACTIONS = [
   'SET_ALLOW_PAN_AND_ZOOM',
   'ADD_GEO_LAYER',
   'REMOVE_GEO_LAYER',
+  'SET_MAP_STYLE',
 ]
 
 const actionMap = GEO_ACTIONS.reduce((acc, a) => ({...acc, [a]: true}), {})

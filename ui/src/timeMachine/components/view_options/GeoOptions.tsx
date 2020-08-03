@@ -47,7 +47,7 @@ import {
   setZoom,
   setField,
   addGeoLayer,
-  removeGeoLayer,
+  removeGeoLayer, setMapStyle,
 } from 'src/timeMachine/components/view_options/geo/geoActions'
 
 // Utils
@@ -73,6 +73,7 @@ interface DispatchProps {
   onUpdateLat: (lat: number) => void
   onUpdateLon: (lon: number) => void
   onUpdateZoom: (zoom: number) => void
+  onUpdateMapStyle: (style: string) => void
   onUpdateAllowPanAndZoom: (allowPanAndZoom: boolean) => void
   onUpdateDetectCoordinateFields: (detectCoordinateFields: boolean) => void
   onUpdateLayerType: (type: string, layer: number) => void
@@ -87,6 +88,13 @@ const VISUALIZATION_TYPES = {
   'Point map': 'pointMap',
   Heatmap: 'heatmap',
   'Track map': 'trackMap',
+}
+
+const MAP_STYLES = {
+  'Roads': 'roads',
+  'Satellite': 'satellite',
+  'Satellite (plain)': 'satellite_plain',
+  'Dark': 'dark'
 }
 
 class GeoOptions extends PureComponent<Props> {
@@ -145,6 +153,7 @@ class GeoOptions extends PureComponent<Props> {
     const {
       layers,
       allowPanAndZoom,
+      mapStyle,
       onUpdateAllowPanAndZoom,
       onAddLayer,
       onRemoveLayer,
@@ -236,6 +245,15 @@ class GeoOptions extends PureComponent<Props> {
               </>
             }
           />
+          <Form.Element className={'mapStyle'} label="Map Graphics">
+            <SelectDropdown
+              options={Object.keys(MAP_STYLES)}
+              selectedOption={mapStyle || 'Roads'}
+              onSelect={style => {
+                this.props.onUpdateMapStyle(style)
+              }}
+            />
+          </Form.Element>
           {layers.map((layer, id) => {
             return (
               <div key={id}>
@@ -283,6 +301,7 @@ const mapDispatchToProps: DispatchProps = {
   onUpdateLat: setLatitude,
   onUpdateLon: setLongitude,
   onUpdateZoom: setZoom,
+  onUpdateMapStyle: setMapStyle,
   onUpdateAllowPanAndZoom: setAllowPanAndZoom,
   onUpdateDetectCoordinateFields: setDetectCoordinateFields,
   onAddLayer: addGeoLayer,

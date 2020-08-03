@@ -37,6 +37,7 @@ interface Props {
   lat: number
   lon: number
   zoom: number
+  mapStyle: string
   isViewportEditable: boolean
   detectCoordinateFields: boolean
   onViewportChange: (lat: number, lon: number, zoom: number) => void
@@ -134,9 +135,10 @@ class Geo extends PureComponent<Props, State> {
   public render() {
     const {width, height} = this.props
     if (width === 0 || height === 0) return null
-    const {lat, lon, zoom, stylingConfig} = this.props
+    const {lat, lon, zoom, mapStyle, stylingConfig} = this.props
     const {layers, tileServerUrl, bingKey} = this.props
     const {preprocessedTable} = this
+    console.log('mapStyle',mapStyle);
     return (
       <Map
         ref={this.mapRef}
@@ -157,20 +159,20 @@ class Geo extends PureComponent<Props, State> {
       >
         {bingKey ? (
           <LayersControl position="topright">
-            <LayersControl.BaseLayer checked name="Roads">
+            <LayersControl.BaseLayer checked={mapStyle==='Roads'} name="Roads">
               <BingLayer minNativeZoom={3} bingkey={bingKey} type="Road" />
             </LayersControl.BaseLayer>
-            <LayersControl.BaseLayer name="Satellite (Plain)">
+            <LayersControl.BaseLayer checked={mapStyle==='Satellite (plain)'} name="Satellite (Plain)">
               <BingLayer minNativeZoom={3} bingkey={bingKey} />
             </LayersControl.BaseLayer>
-            <LayersControl.BaseLayer name="Satellite (Labels)">
+            <LayersControl.BaseLayer checked={mapStyle==='Satellite'} name="Satellite (Labels)">
               <BingLayer
                 minNativeZoom={3}
                 bingkey={bingKey}
                 type="AerialWithLabels"
               />
             </LayersControl.BaseLayer>
-            <LayersControl.BaseLayer name="Dark mode">
+            <LayersControl.BaseLayer checked={mapStyle==='Dark'} name="Dark mode">
               <BingLayer
                 minNativeZoom={3}
                 bingkey={bingKey}
@@ -218,11 +220,7 @@ class Geo extends PureComponent<Props, State> {
                   table={preprocessedTable}
                   properties={pointMapLayer}
                   stylingConfig={stylingConfig}
-                  isClustered={
-                    pointMapLayer.isClustered === undefined
-                      ? true
-                      : pointMapLayer.isClustered
-                  }
+                  isClustered={pointMapLayer.isClustered === true}
                 />
               )
             case 'trackMap':

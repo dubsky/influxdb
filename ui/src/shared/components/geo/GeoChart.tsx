@@ -187,7 +187,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
 
   private onAutoResize = ({width, height}) => {
     const {properties, theme, table, isInConfigurationMode} = this.props
-    const {layers, zoom, allowPanAndZoom, detectCoordinateFields} = properties
+    const {layers, zoom, allowPanAndZoom, detectCoordinateFields, mapStyle} = properties
     const {lat, lon} = properties.center
     const config = theme === 'light' ? VIS_THEME_LIGHT : VIS_THEME
     const {
@@ -213,6 +213,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
           lat={lat}
           lon={lon}
           zoom={zoom}
+          mapStyle={mapStyle}
           isViewportEditable={isInConfigurationMode || allowPanAndZoom}
           detectCoordinateFields={detectCoordinateFields}
           layers={layers}

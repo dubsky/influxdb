@@ -41,6 +41,15 @@ export const geoTimeMachineReducer = (
         view.properties.center.lon = lon
       })
     }
+    case 'SET_MAP_STYLE': {
+      const {mapStyle} = action.payload
+      return produce(state, draftState => {
+        const view = draftState.view as any/*as ExtractWorkingView<
+          typeof action.payload
+          >*/
+        view.properties.mapStyle = mapStyle
+      })
+    }
     case 'SET_ALLOW_PAN_AND_ZOOM': {
       const {allowPanAndZoom} = action.payload
       return produce(state, draftState => {

@@ -88,7 +88,7 @@ export const PointMapLayer: FunctionComponent<Props> = props => {
   )
   return (
     <>
-      {isClustered ? <MarkerClusterGroup>{result}</MarkerClusterGroup> : result}
+      {isClustered===true ? <MarkerClusterGroup>{result}</MarkerClusterGroup> : result}
       {tooltip}
     </>
   )
