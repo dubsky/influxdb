@@ -17,6 +17,15 @@ import {
   Label,
 } from 'src/types'
 
+import {Stack} from 'src/client'
+
+export interface InstalledStack extends Stack {
+  eventType: string
+  name: string
+  resources: any[]
+  sources: string[]
+}
+
 export interface TemplateSummary extends Omit<GenTemplateSummary, 'labels'> {
   labels: string[]
   status: RemoteDataState
@@ -24,9 +33,20 @@ export interface TemplateSummary extends Omit<GenTemplateSummary, 'labels'> {
 
 export type CommunityTemplate = any
 
+export interface EnvReference {
+  resourceField: string
+  envRefKey: string
+  value?: string | number | boolean
+  defaultValue?: string | number | boolean
+  valueType: string
+}
+
 export interface TemplatesState extends NormalizedState<TemplateSummary> {
   exportTemplate: {status: RemoteDataState; item: DocumentCreate}
-  activeCommunityTemplate: CommunityTemplate
+  stagedCommunityTemplate: CommunityTemplate
+  stagedTemplateEnvReferences: {[key: string]: EnvReference}
+  stagedTemplateUrl: string
+  stacks: InstalledStack[]
 }
 
 interface KeyValuePairs {

@@ -9,7 +9,7 @@ import EventTable from 'src/eventViewer/components/EventTable'
 import AlertHistoryControls from 'src/alerting/components/AlertHistoryControls'
 import AlertHistoryQueryParams from 'src/alerting/components/AlertHistoryQueryParams'
 import GetResources from 'src/resources/components/GetResources'
-import CloudUpgradeButton from 'src/shared/components/CloudUpgradeButton'
+import RateLimitAlert from 'src/cloud/components/RateLimitAlert'
 
 // Constants
 import {
@@ -31,20 +31,22 @@ import {getRuleIDs} from 'src/notifications/rules/selectors'
 // Types
 import {ResourceIDs} from 'src/checks/reducers'
 import {ResourceType, AlertHistoryType, AppState} from 'src/types'
+import {RouteComponentProps} from 'react-router-dom'
 
 export const ResourceIDsContext = createContext<ResourceIDs>(null)
-
-interface OwnProps {
-  params: {orgID: string}
-}
 
 interface StateProps {
   resourceIDs: ResourceIDs
 }
 
-type Props = OwnProps & StateProps
+type Props = RouteComponentProps<{orgID: string}> & StateProps
 
-const AlertHistoryIndex: FC<Props> = ({params: {orgID}, resourceIDs}) => {
+const AlertHistoryIndex: FC<Props> = ({
+  match: {
+    params: {orgID},
+  },
+  resourceIDs,
+}) => {
   const [historyType, setHistoryType] = useState<AlertHistoryType>(
     getInitialHistoryType()
   )
@@ -78,7 +80,7 @@ const AlertHistoryIndex: FC<Props> = ({params: {orgID}, resourceIDs}) => {
                   title="Check Statuses"
                   testID="alert-history-title"
                 />
-                <CloudUpgradeButton />
+                <RateLimitAlert />
               </Page.Header>
               <Page.ControlBar fullWidth={true}>
                 <AlertHistoryQueryParams

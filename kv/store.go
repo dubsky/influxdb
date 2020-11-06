@@ -9,6 +9,8 @@ import (
 var (
 	// ErrKeyNotFound is the error returned when the key requested is not found.
 	ErrKeyNotFound = errors.New("key not found")
+	// ErrBucketNotFound is the error returned when the bucket cannot be found.
+	ErrBucketNotFound = errors.New("bucket not found")
 	// ErrTxNotWritable is the error returned when an mutable operation is called during
 	// a non-writable transaction.
 	ErrTxNotWritable = errors.New("transaction is not writable")
@@ -22,6 +24,23 @@ func IsNotFound(err error) bool {
 	return err == ErrKeyNotFound
 }
 
+// SchemaStore is a superset of Store along with store schema change
+// functionality like bucket creation and deletion.
+//
+// This type is made available via the `kv/migration` package.
+// It should be consumed via this package to create and delete buckets using a migration.
+// Checkout the internal tool `cmd/internal/kvmigrate` for building a new migration Go file into
+// the correct location (in kv/migration/all.go).
+// Configuring your bucket here will ensure it is created properly on initialization of InfluxDB.
+type SchemaStore interface {
+	Store
+
+	// CreateBucket creates a bucket on the underlying store if it does not exist
+	CreateBucket(ctx context.Context, bucket []byte) error
+	// DeleteBucket deletes a bucket on the underlying store if it exists
+	DeleteBucket(ctx context.Context, bucket []byte) error
+}
+
 // Store is an interface for a generic key value store. It is modeled after
 // the boltdb database struct.
 type Store interface {
@@ -32,6 +51,8 @@ type Store interface {
 	Update(context.Context, func(Tx) error) error
 	// Backup copies all K:Vs to a writer, file format determined by implementation.
 	Backup(ctx context.Context, w io.Writer) error
+	// Restore replaces the underlying data file with the data from r.
+	Restore(ctx context.Context, r io.Reader) error
 }
 
 // Tx is a transaction in the store.
@@ -153,6 +174,7 @@ type CursorConfig struct {
 	Hints     CursorHints
 	Prefix    []byte
 	SkipFirst bool
+	Limit     *int
 }
 
 // NewCursorConfig constructs and configures a CursorConfig used to configure
@@ -204,9 +226,17 @@ func WithCursorSkipFirstItem() CursorOption {
 	}
 }
 
+// WithCursorLimit restricts the number of key values return by the cursor
+// to the provided limit count.
+func WithCursorLimit(limit int) CursorOption {
+	return func(c *CursorConfig) {
+		c.Limit = &limit
+	}
+}
+
 // VisitFunc is called for each k, v byte slice pair from the underlying source bucket
 // which are found in the index bucket for a provided foreign key.
-type VisitFunc func(k, v []byte) error
+type VisitFunc func(k, v []byte) (bool, error)
 
 // WalkCursor consumers the forward cursor call visit for each k/v pair found
 func WalkCursor(ctx context.Context, cursor ForwardCursor, visit VisitFunc) (err error) {
@@ -217,14 +247,12 @@ func WalkCursor(ctx context.Context, cursor ForwardCursor, visit VisitFunc) (err
 	}()
 
 	for k, v := cursor.Next(); k != nil; k, v = cursor.Next() {
-		if err := visit(k, v); err != nil {
+		if cont, err := visit(k, v); !cont || err != nil {
 			return err
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 	}
 

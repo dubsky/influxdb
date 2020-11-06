@@ -1,23 +1,31 @@
+// Libraries
 import React, {PureComponent} from 'react'
 import qs from 'qs'
-import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {connect, ConnectedProps} from 'react-redux'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
+
+// Actions
 import {setDashboard} from 'src/shared/actions/currentDashboard'
-import {getVariables} from 'src/variables/selectors'
 import {selectValue} from 'src/variables/actions/thunks'
-import {AppState, Variable} from 'src/types'
+import {setDashboardVisit} from 'src/perf/actions'
 
-interface StateProps {
-  variables: Variable[]
-  dashboard: string
+// Utils
+import {event} from 'src/cloud/utils/reporting'
+
+// Selector
+import {getVariables} from 'src/variables/selectors'
+
+// Types
+import {AppState} from 'src/types'
+
+type ReduxProps = ConnectedProps<typeof connector>
+interface OwnProps {
+  children: React.ReactNode
 }
 
-interface DispatchProps {
-  updateDashboard: typeof setDashboard
-  selectValue: typeof selectValue
-}
-
-type Props = StateProps & DispatchProps & WithRouterProps
+type Props = ReduxProps &
+  OwnProps &
+  RouteComponentProps<{orgID: string; dashboardID: string}>
 
 class DashboardRoute extends PureComponent<Props> {
   pendingVars: [{[key: string]: any}]
@@ -47,8 +55,10 @@ class DashboardRoute extends PureComponent<Props> {
   }
 
   componentDidMount() {
-    const {dashboard, updateDashboard, variables} = this.props
-    const dashboardID = this.props.params.dashboardID
+    const {dashboard, updateDashboard, variables, dashboardVisit} = this.props
+    const dashboardID = this.props.match.params.dashboardID
+    dashboardVisit(dashboardID, new Date().getTime())
+    event('Dashboard Visit', {dashboardID})
     const urlVars = qs.parse(this.props.location.search, {
       ignoreQueryPrefix: true,
     })
@@ -106,7 +116,7 @@ class DashboardRoute extends PureComponent<Props> {
   }
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const variables = getVariables(state)
 
   return {
@@ -115,12 +125,12 @@ const mstp = (state: AppState): StateProps => {
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
+  dashboardVisit: setDashboardVisit,
   updateDashboard: setDashboard,
   selectValue: selectValue,
 }
 
-export default connect<StateProps, DispatchProps>(
-  mstp,
-  mdtp
-)(withRouter<{}>(DashboardRoute))
+const connector = connect(mstp, mdtp)
+
+export default connector(withRouter(DashboardRoute))

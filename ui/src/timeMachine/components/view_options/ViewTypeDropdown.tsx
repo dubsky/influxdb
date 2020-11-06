@@ -1,6 +1,6 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
 // Actions
 import {setType} from 'src/timeMachine/actions'
@@ -19,15 +19,8 @@ import {VIS_GRAPHICS} from 'src/timeMachine/constants/visGraphics'
 import {AppState, ViewType} from 'src/types'
 import {ComponentStatus} from 'src/clockface'
 
-interface DispatchProps {
-  onUpdateType: typeof setType | ((type: ViewType) => void)
-}
-
-interface StateProps {
-  viewType: ViewType
-}
-
-type Props = DispatchProps & StateProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = ReduxProps
 
 class ViewTypeDropdown extends PureComponent<Props> {
   public render() {
@@ -61,20 +54,32 @@ class ViewTypeDropdown extends PureComponent<Props> {
   }
 
   private get dropdownItems(): JSX.Element[] {
-    return VIS_GRAPHICS.filter(
-      vis => !vis.featureFlagDriven || isFlagEnabled(`${vis.type}Widget`)
-    ).map(g => (
-      <Dropdown.Item
-        key={`view-type--${g.type}`}
-        id={`${g.type}`}
-        testID={`view-type--${g.type}`}
-        value={g.type}
-        onClick={this.handleChange}
-        selected={`${g.type}` === this.selectedView}
-      >
-        {this.getVewTypeGraphic(g.type)}
-      </Dropdown.Item>
-    ))
+    return VIS_GRAPHICS.filter(g => {
+      if (g.type === 'mosaic' && !isFlagEnabled('mosaicGraphType')) {
+        return false
+      }
+      if (g.type === 'band' && !isFlagEnabled('bandPlotType')) {
+        return false
+      }
+      if (g.type === 'geo' && !isFlagEnabled('geoWidgetType')) {
+        // TODO: vlada
+        return false
+      }
+      return true
+    }).map(g => {
+      return (
+        <Dropdown.Item
+          key={`view-type--${g.type}`}
+          id={`${g.type}`}
+          testID={`view-type--${g.type}`}
+          value={g.type}
+          onClick={this.handleChange}
+          selected={`${g.type}` === this.selectedView}
+        >
+          {this.getVewTypeGraphic(g.type)}
+        </Dropdown.Item>
+      )
+    })
   }
 
   private get dropdownStatus(): ComponentStatus {
@@ -112,16 +117,16 @@ class ViewTypeDropdown extends PureComponent<Props> {
 
 export {ViewTypeDropdown}
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const {view} = getActiveTimeMachine(state)
 
   return {viewType: view.properties.type}
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   onUpdateType: setType,
 }
-export default connect<StateProps, DispatchProps, {}>(
-  mstp,
-  mdtp
-)(ViewTypeDropdown)
+
+const connector = connect(mstp, mdtp)
+
+export default connector(ViewTypeDropdown)

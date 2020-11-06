@@ -1,7 +1,7 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import _ from 'lodash'
-import {withRouter, WithRouterProps} from 'react-router'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 
 // Components
 import {Tabs, Orientation, ComponentSize} from '@influxdata/clockface'
@@ -16,18 +16,24 @@ interface OwnProps {
   orgID: string
 }
 
-type Props = OwnProps & WithRouterProps
+type Props = OwnProps & RouteComponentProps<{orgID: string}>
 
 @ErrorHandling
 class LoadDataNavigation extends PureComponent<Props> {
   public render() {
-    const {activeTab, orgID, router} = this.props
+    const {activeTab, orgID, history} = this.props
 
     const handleTabClick = (id: string): void => {
-      router.push(`/orgs/${orgID}/load-data/${id}`)
+      history.push(`/orgs/${orgID}/load-data/${id}`)
     }
 
     const tabs = [
+      {
+        text: 'Sources',
+        id: 'sources',
+        cloudExclude: false,
+        featureFlag: null,
+      },
       {
         text: 'Buckets',
         id: 'buckets',
@@ -49,12 +55,6 @@ class LoadDataNavigation extends PureComponent<Props> {
       {
         text: 'Tokens',
         id: 'tokens',
-        cloudExclude: false,
-        featureFlag: null,
-      },
-      {
-        text: 'Client Libraries',
-        id: 'client-libraries',
         cloudExclude: false,
         featureFlag: null,
       },

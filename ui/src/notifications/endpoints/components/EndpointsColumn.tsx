@@ -1,7 +1,7 @@
 // Libraries
 import React, {FC} from 'react'
 import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 
 // Components
 import {Button, IconFont, ComponentColor} from '@influxdata/clockface'
@@ -11,17 +11,26 @@ import {AppState, NotificationEndpoint, ResourceType} from 'src/types'
 
 // Utils
 import {getAll} from 'src/resources/selectors'
+import {isFlagEnabled} from 'src/shared/utils/featureFlag'
 
 interface StateProps {
   endpoints: NotificationEndpoint[]
 }
-type OwnProps = {}
-type Props = OwnProps & WithRouterProps & StateProps
+interface OwnProps {
+  tabIndex: number
+}
 
-const EndpointsColumn: FC<Props> = ({router, params, endpoints}) => {
+type Props = OwnProps & RouteComponentProps<{orgID: string}> & StateProps
+
+const EndpointsColumn: FC<Props> = ({history, match, endpoints, tabIndex}) => {
   const handleOpenOverlay = () => {
-    const newRuleRoute = `/orgs/${params.orgID}/alerting/endpoints/new`
-    router.push(newRuleRoute)
+    const newRuleRoute = `/orgs/${match.params.orgID}/alerting/endpoints/new`
+    history.push(newRuleRoute)
+  }
+
+  const conditionalEndpoints: Array<string> = []
+  if (isFlagEnabled('notification-endpoint-telegram')) {
+    conditionalEndpoints.push('Telegram')
   }
 
   const tooltipContents = (
@@ -30,7 +39,7 @@ const EndpointsColumn: FC<Props> = ({router, params, endpoints}) => {
       <br />
       to a third party service that can receive notifications
       <br />
-      like Slack, PagerDuty, or an HTTP server
+      like Slack, PagerDuty, {conditionalEndpoints.join(', ')}or an HTTP server
       <br />
       <br />
       <a
@@ -58,6 +67,7 @@ const EndpointsColumn: FC<Props> = ({router, params, endpoints}) => {
       title="Notification Endpoints"
       createButton={createButton}
       questionMarkTooltipContents={tooltipContents}
+      tabIndex={tabIndex}
     >
       {searchTerm => (
         <EndpointCards endpoints={endpoints} searchTerm={searchTerm} />
@@ -75,4 +85,4 @@ const mstp = (state: AppState) => {
   return {endpoints}
 }
 
-export default connect<StateProps>(mstp)(withRouter<OwnProps>(EndpointsColumn))
+export default connect<StateProps>(mstp)(withRouter(EndpointsColumn))

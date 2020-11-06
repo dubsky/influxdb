@@ -27,23 +27,21 @@ func initBoltOrganizationService(f influxdbtesting.OrganizationFields, t *testin
 	}
 }
 
-func initOrganizationService(s kv.Store, f influxdbtesting.OrganizationFields, t *testing.T) (influxdb.OrganizationService, string, func()) {
+func initOrganizationService(s kv.SchemaStore, f influxdbtesting.OrganizationFields, t *testing.T) (influxdb.OrganizationService, string, func()) {
+	ctx := context.Background()
 	svc := kv.NewService(zaptest.NewLogger(t), s)
-	svc.OrgBucketIDs = f.OrgBucketIDs
+	svc.OrgIDs = f.OrgBucketIDs
+	svc.BucketIDs = f.OrgBucketIDs
 	svc.IDGenerator = f.IDGenerator
 	svc.TimeGenerator = f.TimeGenerator
 	if f.TimeGenerator == nil {
 		svc.TimeGenerator = influxdb.RealTimeGenerator{}
 	}
 
-	ctx := context.Background()
-	if err := svc.Initialize(ctx); err != nil {
-		t.Fatalf("error initializing organization service: %v", err)
-	}
-
-	for _, u := range f.Organizations {
-		if err := svc.PutOrganization(ctx, u); err != nil {
-			t.Fatalf("failed to populate organizations")
+	for _, o := range f.Organizations {
+		o.ID = svc.OrgIDs.ID()
+		if err := svc.PutOrganization(ctx, o); err != nil {
+			t.Fatalf("failed to populate organizations: %s", err)
 		}
 	}
 

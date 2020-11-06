@@ -13,6 +13,7 @@ import (
 )
 
 type testable interface {
+	Helper()
 	Logf(string, ...interface{})
 	Error(args ...interface{})
 	Errorf(string, ...interface{})
@@ -29,12 +30,12 @@ func TestBoltUserResourceMappingService(t *testing.T) {
 }
 
 func TestInmemUserResourceMappingService(t *testing.T) {
-	influxdbtesting.UserResourceMappingService(initURMServiceFunc(NewTestBoltStore), t)
+	influxdbtesting.UserResourceMappingService(initURMServiceFunc(NewTestInmemStore), t)
 }
 
 type userResourceMappingTestFunc func(influxdbtesting.UserResourceFields, *testing.T) (influxdb.UserResourceMappingService, func())
 
-func initURMServiceFunc(storeFn func(*testing.T) (kv.Store, func(), error), confs ...kv.ServiceConfig) userResourceMappingTestFunc {
+func initURMServiceFunc(storeFn func(*testing.T) (kv.SchemaStore, func(), error), confs ...kv.ServiceConfig) userResourceMappingTestFunc {
 	return func(f influxdbtesting.UserResourceFields, t *testing.T) (influxdb.UserResourceMappingService, func()) {
 		s, closeStore, err := storeFn(t)
 		if err != nil {
@@ -49,13 +50,9 @@ func initURMServiceFunc(storeFn func(*testing.T) (kv.Store, func(), error), conf
 	}
 }
 
-func initUserResourceMappingService(s kv.Store, f influxdbtesting.UserResourceFields, t testable, configs ...kv.ServiceConfig) (influxdb.UserResourceMappingService, func()) {
-	svc := kv.NewService(zaptest.NewLogger(t), s, configs...)
-
+func initUserResourceMappingService(s kv.SchemaStore, f influxdbtesting.UserResourceFields, t testable, configs ...kv.ServiceConfig) (influxdb.UserResourceMappingService, func()) {
 	ctx := context.Background()
-	if err := svc.Initialize(ctx); err != nil {
-		t.Fatalf("error initializing urm service: %v", err)
-	}
+	svc := kv.NewService(zaptest.NewLogger(t), s, configs...)
 
 	for _, o := range f.Organizations {
 		if err := svc.CreateOrganization(ctx, o); err != nil {
@@ -70,6 +67,7 @@ func initUserResourceMappingService(s kv.Store, f influxdbtesting.UserResourceFi
 	}
 
 	for _, b := range f.Buckets {
+		b.ID = svc.BucketIDs.ID()
 		if err := svc.PutBucket(ctx, b); err != nil {
 			t.Fatalf("failed to create bucket %q", err)
 		}

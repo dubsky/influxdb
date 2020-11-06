@@ -2,26 +2,86 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/models"
 )
 
 // PointsWriter describes the ability to write points into a storage engine.
 type PointsWriter interface {
-	WritePoints(context.Context, []models.Point) error
+	WritePoints(ctx context.Context, orgID influxdb.ID, bucketID influxdb.ID, points []models.Point) error
+}
+
+// LoggingPointsWriter wraps an underlying points writer but writes logs to
+// another bucket when an error occurs.
+type LoggingPointsWriter struct {
+	// Wrapped points writer. Errored writes from here will be logged.
+	Underlying PointsWriter
+
+	// Service used to look up logging bucket.
+	BucketFinder BucketFinder
+
+	// Name of the bucket to log to.
+	LogBucketName string
+}
+
+// WritePoints writes points to the underlying PointsWriter. Logs on error.
+func (w *LoggingPointsWriter) WritePoints(ctx context.Context, orgID influxdb.ID, bucketID influxdb.ID, p []models.Point) error {
+	if len(p) == 0 {
+		return nil
+	}
+
+	// Write to underlying writer and exit immediately if successful.
+	err := w.Underlying.WritePoints(ctx, orgID, bucketID, p)
+	if err == nil {
+		return nil
+	}
+
+	// Attempt to lookup log bucket.
+	bkts, n, e := w.BucketFinder.FindBuckets(ctx, influxdb.BucketFilter{
+		OrganizationID: &orgID,
+		Name:           &w.LogBucketName,
+	})
+	if e != nil {
+		return e
+	} else if n == 0 {
+		return fmt.Errorf("logging bucket not found: %q", w.LogBucketName)
+	}
+
+	// Log error to bucket.
+	pt, e := models.NewPoint(
+		"write_errors",
+		nil,
+		models.Fields{"error": err.Error()},
+		time.Now(),
+	)
+	if e != nil {
+		return e
+	}
+	if e := w.Underlying.WritePoints(ctx, orgID, bkts[0].ID, []models.Point{pt}); e != nil {
+		return e
+	}
+
+	return err
 }
 
 type BufferedPointsWriter struct {
-	buf []models.Point
-	n   int
-	wr  PointsWriter
-	err error
+	buf      []models.Point
+	orgID    influxdb.ID
+	bucketID influxdb.ID
+	n        int
+	wr       PointsWriter
+	err      error
 }
 
-func NewBufferedPointsWriter(size int, pointswriter PointsWriter) *BufferedPointsWriter {
+func NewBufferedPointsWriter(orgID influxdb.ID, bucketID influxdb.ID, size int, pointswriter PointsWriter) *BufferedPointsWriter {
 	return &BufferedPointsWriter{
-		buf: make([]models.Point, size),
-		wr:  pointswriter,
+		buf:      make([]models.Point, size),
+		orgID:    orgID,
+		bucketID: bucketID,
+		wr:       pointswriter,
 	}
 }
 
@@ -31,7 +91,7 @@ func (b *BufferedPointsWriter) WritePoints(ctx context.Context, p []models.Point
 		if b.Buffered() == 0 {
 			// Large write, empty buffer.
 			// Write directly from p to avoid copy.
-			b.err = b.wr.WritePoints(ctx, p)
+			b.err = b.wr.WritePoints(ctx, b.orgID, b.bucketID, p)
 			return b.err
 		}
 		n := copy(b.buf[b.n:], p)
@@ -61,7 +121,7 @@ func (b *BufferedPointsWriter) Flush(ctx context.Context) error {
 		return nil
 	}
 
-	b.err = b.wr.WritePoints(ctx, b.buf[:b.n])
+	b.err = b.wr.WritePoints(ctx, b.orgID, b.bucketID, b.buf[:b.n])
 	if b.err != nil {
 		return b.err
 	}

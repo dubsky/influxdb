@@ -81,11 +81,6 @@ var (
 
 var _ influxdb.ScraperTargetStoreService = (*Service)(nil)
 
-func (s *Service) initializeScraperTargets(ctx context.Context, tx Tx) error {
-	_, err := s.scrapersBucket(tx)
-	return err
-}
-
 func (s *Service) scrapersBucket(tx Tx) (Bucket, error) {
 	b, err := tx.Bucket([]byte(scrapersBucket))
 	if err != nil {
@@ -177,13 +172,7 @@ func (s *Service) addTarget(ctx context.Context, tx Tx, target *influxdb.Scraper
 		return err
 	}
 
-	urm := &influxdb.UserResourceMapping{
-		ResourceID:   target.ID,
-		UserID:       userID,
-		UserType:     influxdb.Owner,
-		ResourceType: influxdb.ScraperResourceType,
-	}
-	return s.createUserResourceMapping(ctx, tx, urm)
+	return nil
 }
 
 // RemoveTarget removes a scraper target from the bucket.
@@ -220,10 +209,7 @@ func (s *Service) removeTarget(ctx context.Context, tx Tx, id influxdb.ID) error
 		return InternalScraperServiceError(err)
 	}
 
-	return s.deleteUserResourceMappings(ctx, tx, influxdb.UserResourceMappingFilter{
-		ResourceID:   id,
-		ResourceType: influxdb.ScraperResourceType,
-	})
+	return nil
 }
 
 // UpdateTarget updates a scraper target.

@@ -4,27 +4,31 @@ import (
 	"context"
 	"testing"
 
+	"github.com/golang/mock/gomock"
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/inmem"
 	"github.com/influxdata/influxdb/v2/kv"
+	"github.com/influxdata/influxdb/v2/kv/migration/all"
 	"github.com/influxdata/influxdb/v2/storage"
+	"github.com/influxdata/influxdb/v2/storage/mocks"
 	"go.uber.org/zap/zaptest"
 )
 
 func TestBucketService(t *testing.T) {
-	service := storage.NewBucketService(nil, nil)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
 
 	i, err := influxdb.IDFromString("2222222222222222")
 	if err != nil {
 		panic(err)
 	}
 
-	if err := service.DeleteBucket(context.TODO(), *i); err == nil {
-		t.Fatal("expected error, got nil")
-	}
+	engine := mocks.NewMockEngineSchema(ctrl)
 
 	inmemService := newInMemKVSVC(t)
-	service = storage.NewBucketService(inmemService, nil)
+
+	logger := zaptest.NewLogger(t)
+	service := storage.NewBucketService(logger, inmemService, engine)
 
 	if err := service.DeleteBucket(context.TODO(), *i); err == nil {
 		t.Fatal("expected error, got nil")
@@ -40,36 +44,24 @@ func TestBucketService(t *testing.T) {
 		panic(err)
 	}
 
+	engine.EXPECT().DeleteBucket(gomock.Any(), org.ID, bucket.ID)
+
 	// Test deleting a bucket calls into the deleter.
-	deleter := &MockDeleter{}
-	service = storage.NewBucketService(inmemService, deleter)
+	service = storage.NewBucketService(logger, inmemService, engine)
 
 	if err := service.DeleteBucket(context.TODO(), bucket.ID); err != nil {
 		t.Fatal(err)
 	}
-
-	if deleter.orgID != org.ID {
-		t.Errorf("got org ID: %s, expected %s", deleter.orgID, org.ID)
-	} else if deleter.bucketID != bucket.ID {
-		t.Errorf("got bucket ID: %s, expected %s", deleter.bucketID, bucket.ID)
-	}
-}
-
-type MockDeleter struct {
-	orgID, bucketID influxdb.ID
-}
-
-func (m *MockDeleter) DeleteBucket(_ context.Context, orgID, bucketID influxdb.ID) error {
-	m.orgID, m.bucketID = orgID, bucketID
-	return nil
 }
 
 func newInMemKVSVC(t *testing.T) *kv.Service {
 	t.Helper()
 
-	svc := kv.NewService(zaptest.NewLogger(t), inmem.NewKVStore())
-	if err := svc.Initialize(context.Background()); err != nil {
+	logger := zaptest.NewLogger(t)
+	store := inmem.NewKVStore()
+	if err := all.Up(context.Background(), logger, store); err != nil {
 		t.Fatal(err)
 	}
-	return svc
+
+	return kv.NewService(logger, store)
 }

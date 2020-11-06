@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/influxdata/influxdb/v2"
@@ -19,16 +20,6 @@ var (
 
 var _ influxdb.BucketService = (*Service)(nil)
 var _ influxdb.BucketOperationLogService = (*Service)(nil)
-
-func (s *Service) initializeBuckets(ctx context.Context, tx Tx) error {
-	if _, err := s.bucketsBucket(tx); err != nil {
-		return err
-	}
-	if _, err := s.bucketsIndexBucket(tx); err != nil {
-		return err
-	}
-	return nil
-}
 
 func (s *Service) bucketsBucket(tx Tx) (Bucket, error) {
 	b, err := tx.Bucket(bucketBucket)
@@ -188,30 +179,9 @@ func (s *Service) findBucketByName(ctx context.Context, tx Tx, orgID influxdb.ID
 
 	buf, err := idx.Get(key)
 	if IsNotFound(err) {
-		switch n {
-		case influxdb.TasksSystemBucketName:
-			return &influxdb.Bucket{
-				ID:              influxdb.TasksSystemBucketID,
-				Type:            influxdb.BucketTypeSystem,
-				Name:            influxdb.TasksSystemBucketName,
-				RetentionPeriod: influxdb.TasksSystemBucketRetention,
-				Description:     "System bucket for task logs",
-				OrgID:           orgID,
-			}, nil
-		case influxdb.MonitoringSystemBucketName:
-			return &influxdb.Bucket{
-				ID:              influxdb.MonitoringSystemBucketID,
-				Type:            influxdb.BucketTypeSystem,
-				Name:            influxdb.MonitoringSystemBucketName,
-				RetentionPeriod: influxdb.MonitoringSystemBucketRetention,
-				Description:     "System bucket for monitoring logs",
-				OrgID:           orgID,
-			}, nil
-		default:
-			return nil, &influxdb.Error{
-				Code: influxdb.ENotFound,
-				Msg:  fmt.Sprintf("bucket %q not found", n),
-			}
+		return nil, &influxdb.Error{
+			Code: influxdb.ENotFound,
+			Msg:  fmt.Sprintf("bucket %q not found", n),
 		}
 	}
 
@@ -352,46 +322,16 @@ func (s *Service) FindBuckets(ctx context.Context, filter influxdb.BucketFilter,
 		return nil
 	})
 
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// Don't append system buckets if Name is set. Users who don't have real
 	// system buckets won't get mocked buckets if they query for a bucket by name
 	// without the orgID, but this is a vanishing small number of users and has
 	// limited utility anyways. Can be removed once mock system code is ripped out.
 	if filter.Name != nil {
 		return bs, len(bs), nil
-	}
-
-	needsSystemBuckets := true
-	for _, b := range bs {
-		if b.Type == influxdb.BucketTypeSystem {
-			needsSystemBuckets = false
-			break
-		}
-	}
-
-	if needsSystemBuckets {
-		tb := &influxdb.Bucket{
-			ID:              influxdb.TasksSystemBucketID,
-			Type:            influxdb.BucketTypeSystem,
-			Name:            influxdb.TasksSystemBucketName,
-			RetentionPeriod: influxdb.TasksSystemBucketRetention,
-			Description:     "System bucket for task logs",
-		}
-
-		bs = append(bs, tb)
-
-		mb := &influxdb.Bucket{
-			ID:              influxdb.MonitoringSystemBucketID,
-			Type:            influxdb.BucketTypeSystem,
-			Name:            influxdb.MonitoringSystemBucketName,
-			RetentionPeriod: influxdb.MonitoringSystemBucketRetention,
-			Description:     "System bucket for monitoring logs",
-		}
-
-		bs = append(bs, mb)
-	}
-
-	if err != nil {
-		return nil, 0, err
 	}
 
 	return bs, len(bs), nil
@@ -412,18 +352,34 @@ func (s *Service) findBuckets(ctx context.Context, tx Tx, filter influxdb.Bucket
 		filter.OrganizationID = &o.ID
 	}
 
-	var offset, limit, count int
-	var descending bool
+	var (
+		offset, limit, count int
+		descending           bool
+	)
+
+	after := func(*influxdb.Bucket) bool {
+		return true
+	}
+
 	if len(opts) > 0 {
 		offset = opts[0].Offset
 		limit = opts[0].Limit
 		descending = opts[0].Descending
+		if opts[0].After != nil {
+			after = func(b *influxdb.Bucket) bool {
+				if descending {
+					return b.ID < *opts[0].After
+				}
+
+				return b.ID > *opts[0].After
+			}
+		}
 	}
 
 	filterFn := filterBucketsFn(filter)
 	err := s.forEachBucket(ctx, tx, descending, func(b *influxdb.Bucket) bool {
 		if filterFn(b) {
-			if count >= offset {
+			if count >= offset && after(b) {
 				bs = append(bs, b)
 			}
 			count++
@@ -473,7 +429,11 @@ func (s *Service) createBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) (
 		}
 	}
 
-	if err := s.validBucketName(ctx, tx, b); err != nil {
+	if err := s.uniqueBucketName(ctx, tx, b); err != nil {
+		return err
+	}
+
+	if err := validBucketName(b.Name, b.Type); err != nil {
 		return err
 	}
 
@@ -515,7 +475,7 @@ func (s *Service) createBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) (
 }
 
 func (s *Service) generateBucketID(ctx context.Context, tx Tx) (influxdb.ID, error) {
-	return s.generateSafeID(ctx, tx, bucketBucket)
+	return s.generateSafeID(ctx, tx, bucketBucket, s.BucketIDs)
 }
 
 // PutBucket will put a bucket without setting an ID.
@@ -628,10 +588,7 @@ func (s *Service) forEachBucket(ctx context.Context, tx Tx, descending bool, fn 
 	return nil
 }
 
-func (s *Service) validBucketName(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
-	span, ctx := tracing.StartSpanFromContext(ctx)
-	defer span.Finish()
-
+func (s *Service) uniqueBucketName(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
 	key, err := bucketIndexKey(b)
 	if err != nil {
 		return err
@@ -645,6 +602,27 @@ func (s *Service) validBucketName(ctx context.Context, tx Tx, b *influxdb.Bucket
 	}
 
 	return err
+}
+
+// validBucketName reports any errors with bucket names
+func validBucketName(name string, typ influxdb.BucketType) error {
+	// names starting with an underscore are reserved for system buckets
+	if strings.HasPrefix(name, "_") && typ != influxdb.BucketTypeSystem {
+		return &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  fmt.Sprintf("bucket name %s is invalid. Buckets may not start with underscore", name),
+			Op:   influxdb.OpCreateBucket,
+		}
+	}
+	// quotation marks will cause queries to fail
+	if strings.Contains(name, "\"") {
+		return &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  fmt.Sprintf("bucket name %s is invalid. Bucket names may not include quotation marks", name),
+			Op:   influxdb.OpCreateBucket,
+		}
+	}
+	return nil
 }
 
 // UpdateBucket updates a bucket according the parameters set on upd.
@@ -699,6 +677,11 @@ func (s *Service) updateBucket(ctx context.Context, tx Tx, id influxdb.ID, upd i
 				Msg:  "bucket name is not unique",
 			}
 		}
+
+		if err := validBucketName(*upd.Name, b.Type); err != nil {
+			return nil, err
+		}
+
 		key, err := bucketIndexKey(b)
 		if err != nil {
 			return nil, err
@@ -850,7 +833,7 @@ func (s *Service) GetBucketOperationLog(ctx context.Context, id influxdb.ID, opt
 			return err
 		}
 
-		return s.forEachLogEntry(ctx, tx, key, opts, func(v []byte, t time.Time) error {
+		return s.ForEachLogEntryTx(ctx, tx, key, opts, func(v []byte, t time.Time) error {
 			e := &influxdb.OperationLogEntry{}
 			if err := json.Unmarshal(v, e); err != nil {
 				return err
@@ -863,7 +846,7 @@ func (s *Service) GetBucketOperationLog(ctx context.Context, id influxdb.ID, opt
 		})
 	})
 
-	if err != nil && err != errKeyValueLogBoundsNotFound {
+	if err != nil && err != ErrKeyValueLogBoundsNotFound {
 		return nil, 0, err
 	}
 
@@ -899,7 +882,7 @@ func (s *Service) appendBucketEventToLog(ctx context.Context, tx Tx, id influxdb
 		return err
 	}
 
-	return s.addLogEntry(ctx, tx, k, v, s.Now())
+	return s.AddLogEntryTx(ctx, tx, k, v, s.Now())
 }
 
 // UnexpectedBucketError is used when the error comes from an internal system.

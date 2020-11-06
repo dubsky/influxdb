@@ -4,16 +4,18 @@ import './style.scss'
 
 register({
   type: 'query',
+  family: 'transform',
   priority: 1,
   component: View,
   button: 'Flux Script',
   initial: {
     panelVisibility: 'visible',
-    panelHeight: 200,
+    panelHeight: 330,
     activeQuery: 0,
     queries: [
       {
-        text: '// Write Flux script here',
+        text:
+          '// Write Flux script here\n// use __PREVIOUS_RESULT__ to continue building from the previous cell',
         editMode: 'advanced',
         builderConfig: {
           buckets: [],

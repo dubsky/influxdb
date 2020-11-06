@@ -31,9 +31,9 @@
 - name: Community Templates
   description: Replace current template uploading functionality with community driven templates
   key: communityTemplates
-  default: false
+  default: true
   expose: true
-  contact: Bucky, Johnny Steenbergen (Berg)
+  contact: Bucky
   lifetime: permanent
 
 - name: Frontend Example
@@ -43,81 +43,11 @@
   contact: Gavin Cabbage
   expose: true
 
-- name: Push Down Window Aggregate Count
-  description: Enable Count variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateCount
+- name: Group Window Aggregate Transpose
+  description: Enables the GroupWindowAggregateTransposeRule for all enabled window aggregates
+  key: groupWindowAggregateTranspose
   default: false
   contact: Query Team
-
-- name: Push Down Window Aggregate Sum
-  description: Enable Sum variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateSum
-  default: false
-  contact: Query Team
-
-- name: Push Down Window Aggregate Min
-  description: Enable Min variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateMin
-  default: false
-  contact: Query Team
-
-- name: Push Down Window Aggregate Max
-  description: Enable Max variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateMax
-  default: false
-  contact: Query Team
-
-- name: Push Down Window Aggregate Mean
-  description: Enable Mean variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateMean
-  default: false
-  contact: Query Team
-
-- name: Push Down Window Aggregate First
-  description: Enable First variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateFirst
-  default: false
-  contact: Query Team
-
-- name: Push Down Window Aggregate Last
-  description: Enable Last variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-  key: pushDownWindowAggregateLast
-  default: false
-  contact: Query Team
-
-- name: New Auth Package
-  description: Enables the refactored authorization api
-  key: newAuth
-  default: false
-  contact: Alirie Gray
-  lifetime: temporary
-
-- name: Push Down Group Aggregate Count
-  description: Enable the count variant of PushDownGroupAggregate planner rule
-  key: pushDownGroupAggregateCount
-  default: false
-  contact: Query Team
-
-- name: Push Down Group Aggregate Sum
-  description: Enable the sum variant of PushDownGroupAggregate planner rule
-  key: pushDownGroupAggregateSum
-  default: false
-  contact: Query Team
-  lifetime: temporary
-
-- name: Push Down Group Aggregate First
-  description: Enable the first variant of PushDownGroupAggregate planner rule
-  key: pushDownGroupAggregateFirst
-  default: false
-  contact: Query Team
-  lifetime: temporary
-
-- name: Push Down Group Aggregate Last
-  description: Enable the last variant of PushDownGroupAggregate planner rule
-  key: pushDownGroupAggregateLast
-  default: false
-  contact: Query Team
-  lifetime: temporary
 
 - name: New Label Package
   description: Enables the refactored labels api
@@ -126,14 +56,6 @@
   contact: Alirie Gray
   lifetime: temporary
 
-- name: New Hydrate Vars Functionality
-  description: Enables a minimalistic variable hydration
-  key: hydratevars
-  default: false
-  contact: Ariel Salem / Monitoring Team
-  lifetime: temporary
-  expose: true
-
 - name: Memory Optimized Fill
   description: Enable the memory optimized fill()
   key: memoryOptimizedFill
@@ -141,9 +63,59 @@
   contact: Query Team
   lifetime: temporary
 
-- name: Urm Free Tasks
-  description: allow task system to operate without creating additional urms
-  key: urmFreeTasks
+- name: Memory Optimized Schema Mutation
+  description: Enable the memory optimized schema mutation functions
+  key: memoryOptimizedSchemaMutation
   default: false
-  contact: Lyon Hill
+  contact: Query Team
   lifetime: temporary
+
+- name: Query Tracing
+  description: Turn on query tracing for queries that are sampled
+  key: queryTracing
+  default: false
+  contact: Query Team
+  lifetime: permanent
+
+- name: Simple Task Options Extraction
+  description: Simplified task options extraction to avoid undefined functions when saving tasks
+  key: simpleTaskOptionsExtraction
+  default: false
+  contact: Brett Buddin
+  lifetime: temporary
+
+- name: Band Plot Type
+  description: Enables the creation of a band plot in Dashboards
+  key: bandPlotType
+  default: false
+  contact: Monitoring Team
+  expose: true
+  lifetime: temporary
+
+- name: Mosaic Graph Type
+  description: Enables the creation of a mosaic graph in Dashboards
+  key: mosaicGraphType
+  default: false
+  contact: Monitoring Team
+  expose: true
+  lifetime: temporary
+
+- name: Notebooks
+  description: Determine if the notebook feature's route and navbar icon are visible to the user
+  key: notebooks
+  default: false
+  contact: Monitoring Team
+  lifetime: temporary
+  expose: true
+
+- name: Inject Latest Success Time
+  description: Inject the latest successful task run timestamp into a Task query extern when executing.
+  key: injectLatestSuccessTime
+  default: false
+  contact: Compute Team
+
+- name: Enforce Organization Dashboard Limits
+  description: Enforces the default limit params for the dashboards api when orgs are set
+  key: enforceOrgDashboardLimits
+  default: false
+  contact: Compute Team

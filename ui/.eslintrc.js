@@ -15,6 +15,7 @@ module.exports = {
   },
   extends: [
     'plugin:react/recommended',
+    'plugin:react-hooks/recommended',
     'prettier/react',
     'prettier/@typescript-eslint',
     'eslint:recommended',
@@ -28,6 +29,7 @@ module.exports = {
     },
   },
   rules: {
+    'curly': ['error', 'all'],
     'no-console': ['error', {allow: ['warn', 'error']}],
     'no-empty': 'off',
     'getter-return': 'off',

@@ -18,18 +18,6 @@ var (
 var _ influxdb.UserService = (*Service)(nil)
 var _ influxdb.UserOperationLogService = (*Service)(nil)
 
-// Initialize creates the buckets for the user service.
-func (s *Service) initializeUsers(ctx context.Context, tx Tx) error {
-	if _, err := s.userBucket(tx); err != nil {
-		return err
-	}
-
-	if _, err := s.userIndexBucket(tx); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (s *Service) userBucket(tx Tx) (Bucket, error) {
 	b, err := tx.Bucket([]byte(userBucket))
 	if err != nil {
@@ -454,6 +442,13 @@ func (s *Service) deleteUser(ctx context.Context, tx Tx, id influxdb.ID) error {
 	return nil
 }
 
+func (s *Service) FindPermissionForUser(ctx context.Context, uid influxdb.ID) (influxdb.PermissionSet, error) {
+	return nil, &influxdb.Error{
+		Code: influxdb.EInternal,
+		Msg:  "not implemented",
+	}
+}
+
 func (s *Service) deleteUsersAuthorizations(ctx context.Context, tx Tx, id influxdb.ID) error {
 	authFilter := influxdb.AuthorizationFilter{
 		UserID: &id,
@@ -481,7 +476,7 @@ func (s *Service) GetUserOperationLog(ctx context.Context, id influxdb.ID, opts 
 			return err
 		}
 
-		return s.forEachLogEntry(ctx, tx, key, opts, func(v []byte, t time.Time) error {
+		return s.ForEachLogEntryTx(ctx, tx, key, opts, func(v []byte, t time.Time) error {
 			e := &influxdb.OperationLogEntry{}
 			if err := json.Unmarshal(v, e); err != nil {
 				return err
@@ -494,7 +489,7 @@ func (s *Service) GetUserOperationLog(ctx context.Context, id influxdb.ID, opts 
 		})
 	})
 
-	if err != nil && err != errKeyValueLogBoundsNotFound {
+	if err != nil && err != ErrKeyValueLogBoundsNotFound {
 		return nil, 0, err
 	}
 
@@ -540,7 +535,7 @@ func (s *Service) appendUserEventToLog(ctx context.Context, tx Tx, id influxdb.I
 		return err
 	}
 
-	return s.addLogEntry(ctx, tx, k, v, s.Now())
+	return s.AddLogEntryTx(ctx, tx, k, v, s.Now())
 }
 
 var (

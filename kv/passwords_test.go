@@ -30,15 +30,11 @@ func initBoltPasswordsService(f influxdbtesting.PasswordFields, t *testing.T) (i
 	}
 }
 
-func initPasswordsService(s kv.Store, f influxdbtesting.PasswordFields, t *testing.T) (influxdb.PasswordsService, func()) {
+func initPasswordsService(s kv.SchemaStore, f influxdbtesting.PasswordFields, t *testing.T) (influxdb.PasswordsService, func()) {
+	ctx := context.Background()
 	svc := kv.NewService(zaptest.NewLogger(t), s)
 
 	svc.IDGenerator = f.IDGenerator
-	ctx := context.Background()
-
-	if err := svc.Initialize(ctx); err != nil {
-		t.Fatalf("error initializing authorization service: %v", err)
-	}
 
 	for _, u := range f.Users {
 		if err := svc.PutUser(ctx, u); err != nil {
@@ -162,9 +158,6 @@ func TestService_SetPassword(t *testing.T) {
 										}
 										return nil, kv.ErrKeyNotFound
 									},
-									PutFn: func(key, val []byte) error {
-										return nil
-									},
 								}, nil
 							},
 						}
@@ -196,9 +189,6 @@ func TestService_SetPassword(t *testing.T) {
 											return []byte(`{"id": "0000000000000001", "name": "user1"}`), nil
 										}
 										return nil, kv.ErrKeyNotFound
-									},
-									PutFn: func(key, val []byte) error {
-										return nil
 									},
 								}, nil
 							},
@@ -234,9 +224,6 @@ func TestService_SetPassword(t *testing.T) {
 											return []byte(`{"id": "0000000000000001", "name": "user1"}`), nil
 										}
 										return nil, kv.ErrKeyNotFound
-									},
-									PutFn: func(key, val []byte) error {
-										return nil
 									},
 								}, nil
 							},

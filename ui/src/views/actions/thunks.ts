@@ -1,25 +1,32 @@
 // Libraries
 import {normalize} from 'normalizr'
+import {isFlagEnabled} from 'src/shared/utils/featureFlag'
 
 // APIs
 import {
   getView as getViewAJAX,
   updateView as updateViewAJAX,
 } from 'src/dashboards/apis'
+import {getCachedResultsOrRunQuery} from 'src/shared/apis/queryCache'
 
 // Constants
 import * as copy from 'src/shared/copy/notifications'
 import {viewSchema} from 'src/schemas'
+
+// Utils
+import applyAutoAggregateRequirements from 'src/utils/autoAggregateRequirements'
 
 // Actions
 import {notify} from 'src/shared/actions/notifications'
 import {setActiveTimeMachine} from 'src/timeMachine/actions'
 import {executeQueries} from 'src/timeMachine/actions/queries'
 import {setView, Action} from 'src/views/actions/creators'
+import {setQueryResults} from 'src/timeMachine/actions/queries'
 
 // Selectors
 import {getViewsForDashboard} from 'src/views/selectors'
 import {getByID} from 'src/resources/selectors'
+import {getOrg} from 'src/organizations/selectors'
 
 // Types
 import {
@@ -31,6 +38,7 @@ import {
   TimeMachineID,
   ResourceType,
 } from 'src/types'
+import {RunQuerySuccessResult} from 'src/shared/apis/query'
 import {Dispatch} from 'redux'
 
 export const getView = (dashboardID: string, cellID: string) => async (
@@ -80,7 +88,11 @@ export const updateViewAndVariables = (
 
     const views = getViewsForDashboard(getState(), dashboardID)
 
-    views.splice(views.findIndex(v => v.id === newView.id), 1, newView)
+    views.splice(
+      views.findIndex(v => v.id === newView.id),
+      1,
+      newView
+    )
 
     const normView = normalize<View, ViewEntities, string>(newView, viewSchema)
 
@@ -92,7 +104,7 @@ export const updateViewAndVariables = (
   }
 }
 
-export const getViewForTimeMachine = (
+export const getViewAndResultsForVEO = (
   dashboardID: string,
   cellID: string,
   timeMachineID: TimeMachineID
@@ -106,14 +118,38 @@ export const getViewForTimeMachine = (
       view = (await getViewAJAX(dashboardID, cellID)) as QueryView
     }
 
+    const updatedView = applyAutoAggregateRequirements(view)
+
     dispatch(
       setActiveTimeMachine(timeMachineID, {
         contextID: dashboardID,
-        view,
+        view: updatedView,
       })
     )
+
+    if (isFlagEnabled('queryCacheForDashboards')) {
+      const queries = view.properties.queries.filter(({text}) => !!text.trim())
+      if (!queries.length) {
+        dispatch(setQueryResults(RemoteDataState.Done, [], null))
+      }
+      const {id: orgID} = getOrg(state)
+      const pendingResults = queries.map(({text}) => {
+        return getCachedResultsOrRunQuery(orgID, text, state)
+      })
+
+      // Wait for new queries to complete
+      const results = await Promise.all(pendingResults.map(r => r.promise))
+      const files = (results as RunQuerySuccessResult[]).map(r => r.csv)
+
+      if (files) {
+        dispatch(setQueryResults(RemoteDataState.Done, files, null, null))
+        return
+      }
+    }
+
     dispatch(executeQueries())
   } catch (error) {
+    console.error(error)
     dispatch(notify(copy.getViewFailed(error.message)))
     dispatch(setView(cellID, RemoteDataState.Error))
   }

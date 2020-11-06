@@ -1,10 +1,9 @@
 // Libraries
 import React, {FunctionComponent} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
 // Types
 import {AppState} from 'src/types'
-import {OverlayID} from 'src/overlays/reducers/overlays'
 
 // Components
 import {Overlay} from '@influxdata/clockface'
@@ -15,20 +14,13 @@ import TelegrafConfigOverlay from 'src/telegrafs/components/TelegrafConfigOverla
 import TelegrafOutputOverlay from 'src/telegrafs/components/TelegrafOutputOverlay'
 import OrgSwitcherOverlay from 'src/pageLayout/components/OrgSwitcherOverlay'
 import CreateBucketOverlay from 'src/buckets/components/CreateBucketOverlay'
+import AssetLimitOverlay from 'src/cloud/components/AssetLimitOverlay'
 
 // Actions
 import {dismissOverlay} from 'src/overlays/actions/overlays'
 
-interface StateProps {
-  overlayID: OverlayID
-  onClose: () => void
-}
-
-interface DispatchProps {
-  clearOverlayControllerState: typeof dismissOverlay
-}
-
-type OverlayControllerProps = StateProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type OverlayControllerProps = ReduxProps
 
 const OverlayController: FunctionComponent<OverlayControllerProps> = props => {
   let activeOverlay = <></>
@@ -66,6 +58,9 @@ const OverlayController: FunctionComponent<OverlayControllerProps> = props => {
     case 'create-bucket':
       activeOverlay = <CreateBucketOverlay onClose={closer} />
       break
+    case 'asset-limit':
+      activeOverlay = <AssetLimitOverlay onClose={closer} />
+      break
     default:
       visibility = false
   }
@@ -73,7 +68,7 @@ const OverlayController: FunctionComponent<OverlayControllerProps> = props => {
   return <Overlay visible={visibility}>{activeOverlay}</Overlay>
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const id = state.overlays.id
   const onClose = state.overlays.onClose
 
@@ -87,7 +82,5 @@ const mdtp = {
   clearOverlayControllerState: dismissOverlay,
 }
 
-export default connect<StateProps, DispatchProps, {}>(
-  mstp,
-  mdtp
-)(OverlayController)
+const connector = connect(mstp, mdtp)
+export default connector(OverlayController)

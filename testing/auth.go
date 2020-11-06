@@ -10,7 +10,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/influxdata/influxdb/v2"
-	platform "github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/mock"
 )
 
@@ -27,8 +26,8 @@ var authorizationCmpOptions = cmp.Options{
 	cmp.Comparer(func(x, y []byte) bool {
 		return bytes.Equal(x, y)
 	}),
-	cmp.Transformer("Sort", func(in []*platform.Authorization) []*platform.Authorization {
-		out := append([]*platform.Authorization(nil), in...) // Copy input to avoid mutating it
+	cmp.Transformer("Sort", func(in []*influxdb.Authorization) []*influxdb.Authorization {
+		out := append([]*influxdb.Authorization(nil), in...) // Copy input to avoid mutating it
 		sort.Slice(out, func(i, j int) bool {
 			return out[i].ID.String() > out[j].ID.String()
 		})
@@ -50,22 +49,23 @@ func WithoutFindByToken() AuthTestOpts {
 
 // AuthorizationFields will include the IDGenerator, and authorizations
 type AuthorizationFields struct {
-	IDGenerator    platform.IDGenerator
-	TokenGenerator platform.TokenGenerator
-	TimeGenerator  platform.TimeGenerator
-	Authorizations []*platform.Authorization
-	Users          []*platform.User
-	Orgs           []*platform.Organization
+	IDGenerator    influxdb.IDGenerator
+	OrgIDGenerator influxdb.IDGenerator
+	TokenGenerator influxdb.TokenGenerator
+	TimeGenerator  influxdb.TimeGenerator
+	Authorizations []*influxdb.Authorization
+	Users          []*influxdb.User
+	Orgs           []*influxdb.Organization
 }
 
 // AuthorizationService tests all the service functions.
 func AuthorizationService(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 	opts ...AuthTestOpts) {
 	tests := []struct {
 		name string
-		fn   func(init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+		fn   func(init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 			t *testing.T)
 	}{
 		{
@@ -98,6 +98,8 @@ func AuthorizationService(
 			continue
 		}
 		t.Run(tt.name, func(t *testing.T) {
+			tt := tt
+			t.Parallel()
 			tt.fn(init, t)
 		})
 	}
@@ -105,15 +107,15 @@ func AuthorizationService(
 
 // CreateAuthorization testing
 func CreateAuthorization(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		authorization *platform.Authorization
+		authorization *influxdb.Authorization
 	}
 	type wants struct {
 		err            error
-		authorizations []*platform.Authorization
+		authorizations []*influxdb.Authorization
 	}
 
 	tests := []struct {
@@ -125,7 +127,8 @@ func CreateAuthorization(
 		{
 			name: "basic create authorization",
 			fields: AuthorizationFields{
-				IDGenerator: mock.NewIDGenerator(authTwoID, t),
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				IDGenerator:    mock.NewIDGenerator(authTwoID, t),
 				TimeGenerator: &mock.TimeGenerator{
 					FakeValue: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 				},
@@ -134,57 +137,56 @@ func CreateAuthorization(
 						return "rand", nil
 					},
 				},
-				Users: []*platform.User{
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "supersecret",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 						Description: "already existing auth",
 					},
 				},
 			},
 			args: args{
-				authorization: &platform.Authorization{
-					OrgID:       MustIDBase16(orgOneID),
+				authorization: &influxdb.Authorization{
+					OrgID:       idOne,
 					UserID:      MustIDBase16(userOneID),
-					Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+					Permissions: createUsersPermission(idOne),
 					Description: "new auth",
 				},
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "supersecret",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 						Description: "already existing auth",
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand",
-						Status:      platform.Active,
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Status:      influxdb.Active,
+						Permissions: createUsersPermission(idOne),
 						Description: "new auth",
-						CRUDLog: platform.CRUDLog{
+						CRUDLog: influxdb.CRUDLog{
 							CreatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 							UpdatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 						},
@@ -195,7 +197,8 @@ func CreateAuthorization(
 		{
 			name: "providing a non existing user is invalid",
 			fields: AuthorizationFields{
-				IDGenerator: mock.NewIDGenerator(authTwoID, t),
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				IDGenerator:    mock.NewIDGenerator(authTwoID, t),
 				TimeGenerator: &mock.TimeGenerator{
 					FakeValue: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 				},
@@ -204,56 +207,56 @@ func CreateAuthorization(
 						return "rand", nil
 					},
 				},
-				Users: []*platform.User{
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "supersecret",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 						Description: "already existing auth",
 					},
 				},
 			},
 			args: args{
-				authorization: &platform.Authorization{
-					OrgID:       MustIDBase16(orgOneID),
+				authorization: &influxdb.Authorization{
+					OrgID:       idOne,
 					UserID:      MustIDBase16(userTwoID),
-					Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+					Permissions: createUsersPermission(idOne),
 					Description: "auth with non-existent user",
 				},
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "supersecret",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 						Description: "already existing auth",
 					},
 				},
-				err: platform.ErrUnableToCreateToken,
+				err: influxdb.ErrUnableToCreateToken,
 			},
 		},
 		{
 			name: "providing a non existing org is invalid",
 			fields: AuthorizationFields{
-				IDGenerator: mock.NewIDGenerator(authTwoID, t),
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				IDGenerator:    mock.NewIDGenerator(authTwoID, t),
 				TimeGenerator: &mock.TimeGenerator{
 					FakeValue: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 				},
@@ -262,50 +265,49 @@ func CreateAuthorization(
 						return "rand", nil
 					},
 				},
-				Users: []*platform.User{
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "supersecret",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 						Description: "already existing auth",
 					},
 				},
 			},
 			args: args{
-				authorization: &platform.Authorization{
-					OrgID:       MustIDBase16(orgTwoID),
+				authorization: &influxdb.Authorization{
+					OrgID:       idTwo,
 					UserID:      MustIDBase16(userOneID),
-					Permissions: createUsersPermission(MustIDBase16(orgTwoID)),
+					Permissions: createUsersPermission(idTwo),
 					Description: "auth with non-existent org",
 				},
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "supersecret",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 						Description: "already existing auth",
 					},
 				},
-				err: platform.ErrUnableToCreateToken,
+				err: influxdb.ErrUnableToCreateToken,
 			},
 		},
 	}
@@ -324,7 +326,7 @@ func CreateAuthorization(
 
 			defer s.DeleteAuthorization(ctx, tt.args.authorization.ID)
 
-			authorizations, _, err := s.FindAuthorizations(ctx, platform.AuthorizationFilter{})
+			authorizations, _, err := s.FindAuthorizations(ctx, influxdb.AuthorizationFilter{})
 			if err != nil {
 				t.Fatalf("failed to retrieve authorizations: %v", err)
 			}
@@ -337,12 +339,12 @@ func CreateAuthorization(
 
 // FindAuthorizationByID testing
 func FindAuthorizationByID(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 ) {
 	type wants struct {
 		err            error
-		authorizations []*platform.Authorization
+		authorizations []*influxdb.Authorization
 	}
 
 	tests := []struct {
@@ -353,7 +355,8 @@ func FindAuthorizationByID(
 		{
 			name: "basic find authorization by id",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -363,46 +366,46 @@ func FindAuthorizationByID(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
+						// ID(1)
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
 						Status:      "active",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
 						Status:      "active",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
@@ -434,16 +437,16 @@ func stringPtr(s string) *string {
 
 // UpdateAuthorization testing
 func UpdateAuthorization(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		id  platform.ID
-		upd *platform.AuthorizationUpdate
+		id  influxdb.ID
+		upd *influxdb.AuthorizationUpdate
 	}
 	type wants struct {
 		err           error
-		authorization *platform.Authorization
+		authorization *influxdb.Authorization
 	}
 	tests := []struct {
 		name   string
@@ -454,10 +457,11 @@ func UpdateAuthorization(
 		{
 			name: "regular update",
 			fields: AuthorizationFields{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
 				TimeGenerator: &mock.TimeGenerator{
 					FakeValue: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 				},
-				Users: []*platform.User{
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -467,65 +471,63 @@ func UpdateAuthorization(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
 						Name: "o2",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand1",
-						Status:      platform.Inactive,
-						OrgID:       MustIDBase16(orgTwoID),
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Status:      influxdb.Inactive,
+						OrgID:       idTwo,
+						Permissions: allUsersPermission(idTwo),
 					},
 					{
 						ID:          MustIDBase16(authZeroID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand0",
-						OrgID:       MustIDBase16(orgOneID),
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						OrgID:       idOne,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand3",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 				},
 			},
 			args: args{
 				id: MustIDBase16(authTwoID),
-				upd: &platform.AuthorizationUpdate{
-					Status:      platform.Inactive.Ptr(),
+				upd: &influxdb.AuthorizationUpdate{
+					Status:      influxdb.Inactive.Ptr(),
 					Description: stringPtr("desc1"),
 				},
 			},
 			wants: wants{
-				authorization: &platform.Authorization{
+				authorization: &influxdb.Authorization{
 					ID:          MustIDBase16(authTwoID),
 					UserID:      MustIDBase16(userTwoID),
-					OrgID:       MustIDBase16(orgOneID),
+					OrgID:       idOne,
 					Token:       "rand2",
-					Permissions: createUsersPermission(MustIDBase16(orgOneID)),
-					Status:      platform.Inactive,
+					Permissions: createUsersPermission(idOne),
+					Status:      influxdb.Inactive,
 					Description: "desc1",
-					CRUDLog: platform.CRUDLog{
+					CRUDLog: influxdb.CRUDLog{
 						UpdatedAt: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 					},
 				},
@@ -534,7 +536,8 @@ func UpdateAuthorization(
 		{
 			name: "update with id not found",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -544,51 +547,49 @@ func UpdateAuthorization(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
 						Name: "o2",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand1",
-						Status:      platform.Inactive,
-						OrgID:       MustIDBase16(orgTwoID),
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Status:      influxdb.Inactive,
+						OrgID:       idTwo,
+						Permissions: allUsersPermission(idTwo),
 					},
 					{
 						ID:          MustIDBase16(authZeroID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand0",
-						OrgID:       MustIDBase16(orgOneID),
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						OrgID:       idOne,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
 			args: args{
 				id: MustIDBase16(authThreeID),
-				upd: &platform.AuthorizationUpdate{
-					Status: platform.Inactive.Ptr(),
+				upd: &influxdb.AuthorizationUpdate{
+					Status: influxdb.Inactive.Ptr(),
 				},
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpUpdateAuthorization,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpUpdateAuthorization,
 					Msg:  "authorization not found",
 				},
 			},
@@ -596,10 +597,11 @@ func UpdateAuthorization(
 		{
 			name: "update with unknown status",
 			fields: AuthorizationFields{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
 				TimeGenerator: &mock.TimeGenerator{
 					FakeValue: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC),
 				},
-				Users: []*platform.User{
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -609,58 +611,56 @@ func UpdateAuthorization(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
 						Name: "o2",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand1",
-						Status:      platform.Inactive,
-						OrgID:       MustIDBase16(orgTwoID),
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Status:      influxdb.Inactive,
+						OrgID:       idTwo,
+						Permissions: allUsersPermission(idTwo),
 					},
 					{
 						ID:          MustIDBase16(authZeroID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand0",
-						OrgID:       MustIDBase16(orgOneID),
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						OrgID:       idOne,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand3",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 				},
 			},
 			args: args{
 				id: MustIDBase16(authTwoID),
-				upd: &platform.AuthorizationUpdate{
-					Status: platform.Status("unknown").Ptr(),
+				upd: &influxdb.AuthorizationUpdate{
+					Status: influxdb.Status("unknown").Ptr(),
 				},
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.EInvalid,
-					Op:   platform.OpUpdateAuthorization,
+				err: &influxdb.Error{
+					Code: influxdb.EInvalid,
+					Op:   influxdb.OpUpdateAuthorization,
 					Msg:  "unknown authorization status",
 				},
 			},
@@ -693,7 +693,7 @@ func UpdateAuthorization(
 
 // FindAuthorizationByToken testing
 func FindAuthorizationByToken(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
@@ -701,7 +701,7 @@ func FindAuthorizationByToken(
 	}
 	type wants struct {
 		err           error
-		authorization *platform.Authorization
+		authorization *influxdb.Authorization
 	}
 
 	tests := []struct {
@@ -713,7 +713,8 @@ func FindAuthorizationByToken(
 		{
 			name: "basic find authorization by token",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -723,45 +724,43 @@ func FindAuthorizationByToken(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
 						Name: "o2",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand1",
-						Status:      platform.Inactive,
-						OrgID:       MustIDBase16(orgTwoID),
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Status:      influxdb.Inactive,
+						OrgID:       idTwo,
+						Permissions: allUsersPermission(idTwo),
 					},
 					{
 						ID:          MustIDBase16(authZeroID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand0",
-						OrgID:       MustIDBase16(orgOneID),
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						OrgID:       idOne,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand3",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 				},
 			},
@@ -769,20 +768,21 @@ func FindAuthorizationByToken(
 				token: "rand1",
 			},
 			wants: wants{
-				authorization: &platform.Authorization{
+				authorization: &influxdb.Authorization{
 					ID:          MustIDBase16(authOneID),
 					UserID:      MustIDBase16(userOneID),
-					OrgID:       MustIDBase16(orgTwoID),
-					Status:      platform.Inactive,
+					OrgID:       idTwo,
+					Status:      influxdb.Inactive,
 					Token:       "rand1",
-					Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+					Permissions: allUsersPermission(idTwo),
 				},
 			},
 		},
 		{
 			name: "find authorization by token",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -792,40 +792,39 @@ func FindAuthorizationByToken(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authZeroID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Permissions: deleteUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: deleteUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand3",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand4",
-						Permissions: deleteUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: deleteUsersPermission(idOne),
 					},
 				},
 			},
@@ -833,13 +832,13 @@ func FindAuthorizationByToken(
 				token: "rand2",
 			},
 			wants: wants{
-				authorization: &platform.Authorization{
+				authorization: &influxdb.Authorization{
 					ID:          MustIDBase16(authTwoID),
 					UserID:      MustIDBase16(userTwoID),
-					OrgID:       MustIDBase16(orgOneID),
+					OrgID:       idOne,
 					Token:       "rand2",
-					Status:      platform.Active,
-					Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+					Status:      influxdb.Active,
+					Permissions: createUsersPermission(idOne),
 				},
 			},
 		},
@@ -863,18 +862,18 @@ func FindAuthorizationByToken(
 
 // FindAuthorizations testing
 func FindAuthorizations(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		ID     platform.ID
-		UserID platform.ID
-		OrgID  platform.ID
+		ID     influxdb.ID
+		UserID influxdb.ID
+		OrgID  influxdb.ID
 		token  string
 	}
 
 	type wants struct {
-		authorizations []*platform.Authorization
+		authorizations []*influxdb.Authorization
 		err            error
 	}
 	tests := []struct {
@@ -886,7 +885,8 @@ func FindAuthorizations(
 		{
 			name: "find all authorizations",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -896,47 +896,46 @@ func FindAuthorizations(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
 			args: args{},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Status:      platform.Active,
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Status:      influxdb.Active,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Status:      platform.Active,
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Status:      influxdb.Active,
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
@@ -944,7 +943,8 @@ func FindAuthorizations(
 		{
 			name: "find authorization by user id",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -954,34 +954,33 @@ func FindAuthorizations(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Status:      platform.Active,
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Status:      influxdb.Active,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand3",
-						Permissions: deleteUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: deleteUsersPermission(idOne),
 					},
 				},
 			},
@@ -989,22 +988,22 @@ func FindAuthorizations(
 				UserID: MustIDBase16(userOneID),
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand1",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand3",
-						Permissions: deleteUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: deleteUsersPermission(idOne),
 					},
 				},
 			},
@@ -1012,69 +1011,68 @@ func FindAuthorizations(
 		{
 			name: "find authorization by org id",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
 						Name: "o2",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand1",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand2",
-						Permissions: deleteUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: deleteUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgTwoID),
-						Status:      platform.Active,
+						OrgID:       idTwo,
+						Status:      influxdb.Active,
 						Token:       "rand3",
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Permissions: allUsersPermission(idTwo),
 					},
 				},
 			},
 			args: args{
-				OrgID: MustIDBase16(orgOneID),
+				OrgID: idOne,
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand1",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand2",
-						Permissions: deleteUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: deleteUsersPermission(idOne),
 					},
 				},
 			},
@@ -1082,7 +1080,8 @@ func FindAuthorizations(
 		{
 			name: "find authorization by org id and user id",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -1092,64 +1091,63 @@ func FindAuthorizations(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
 						Name: "o2",
-						ID:   MustIDBase16(orgTwoID),
+						ID:   idTwo,
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand1",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgTwoID),
-						Status:      platform.Active,
+						OrgID:       idTwo,
+						Status:      influxdb.Active,
 						Token:       "rand2",
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Permissions: allUsersPermission(idTwo),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand3",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authThreeID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgTwoID),
-						Status:      platform.Active,
+						OrgID:       idTwo,
+						Status:      influxdb.Active,
 						Token:       "rand4",
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Permissions: allUsersPermission(idTwo),
 					},
 				},
 			},
 			args: args{
 				UserID: MustIDBase16(userOneID),
-				OrgID:  MustIDBase16(orgTwoID),
+				OrgID:  idTwo,
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgTwoID),
-						Status:      platform.Active,
+						OrgID:       idTwo,
+						Status:      influxdb.Active,
 						Token:       "rand2",
-						Permissions: allUsersPermission(MustIDBase16(orgTwoID)),
+						Permissions: allUsersPermission(idTwo),
 					},
 				},
 			},
@@ -1162,7 +1160,7 @@ func FindAuthorizations(
 			defer done()
 			ctx := context.Background()
 
-			filter := platform.AuthorizationFilter{}
+			filter := influxdb.AuthorizationFilter{}
 			if tt.args.ID.Valid() {
 				filter.ID = &tt.args.ID
 			}
@@ -1187,15 +1185,15 @@ func FindAuthorizations(
 
 // DeleteAuthorization testing
 func DeleteAuthorization(
-	init func(AuthorizationFields, *testing.T) (platform.AuthorizationService, string, func()),
+	init func(AuthorizationFields, *testing.T) (influxdb.AuthorizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		ID platform.ID
+		ID influxdb.ID
 	}
 	type wants struct {
 		err            error
-		authorizations []*platform.Authorization
+		authorizations []*influxdb.Authorization
 	}
 
 	tests := []struct {
@@ -1207,7 +1205,8 @@ func DeleteAuthorization(
 		{
 			name: "delete authorizations using exist id",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -1217,26 +1216,25 @@ func DeleteAuthorization(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
@@ -1244,14 +1242,14 @@ func DeleteAuthorization(
 				ID: MustIDBase16(authOneID),
 			},
 			wants: wants{
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
-						Status:      platform.Active,
+						OrgID:       idOne,
+						Status:      influxdb.Active,
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
@@ -1259,7 +1257,8 @@ func DeleteAuthorization(
 		{
 			name: "delete authorizations using id that does not exist",
 			fields: AuthorizationFields{
-				Users: []*platform.User{
+				OrgIDGenerator: mock.NewIncrementingIDGenerator(1),
+				Users: []*influxdb.User{
 					{
 						Name: "cooluser",
 						ID:   MustIDBase16(userOneID),
@@ -1269,26 +1268,25 @@ func DeleteAuthorization(
 						ID:   MustIDBase16(userTwoID),
 					},
 				},
-				Orgs: []*platform.Organization{
+				Orgs: []*influxdb.Organization{
 					{
 						Name: "o1",
-						ID:   MustIDBase16(orgOneID),
 					},
 				},
-				Authorizations: []*platform.Authorization{
+				Authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand1",
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						UserID:      MustIDBase16(userTwoID),
 						Token:       "rand2",
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
@@ -1296,27 +1294,27 @@ func DeleteAuthorization(
 				ID: MustIDBase16(authThreeID),
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
 					Msg:  "authorization not found",
-					Op:   platform.OpDeleteAuthorization,
+					Op:   influxdb.OpDeleteAuthorization,
 				},
-				authorizations: []*platform.Authorization{
+				authorizations: []*influxdb.Authorization{
 					{
 						ID:          MustIDBase16(authOneID),
 						UserID:      MustIDBase16(userOneID),
 						Token:       "rand1",
-						Status:      platform.Active,
-						OrgID:       MustIDBase16(orgOneID),
-						Permissions: allUsersPermission(MustIDBase16(orgOneID)),
+						Status:      influxdb.Active,
+						OrgID:       idOne,
+						Permissions: allUsersPermission(idOne),
 					},
 					{
 						ID:          MustIDBase16(authTwoID),
 						UserID:      MustIDBase16(userTwoID),
-						OrgID:       MustIDBase16(orgOneID),
+						OrgID:       idOne,
 						Token:       "rand2",
-						Status:      platform.Active,
-						Permissions: createUsersPermission(MustIDBase16(orgOneID)),
+						Status:      influxdb.Active,
+						Permissions: createUsersPermission(idOne),
 					},
 				},
 			},
@@ -1331,7 +1329,7 @@ func DeleteAuthorization(
 			err := s.DeleteAuthorization(ctx, tt.args.ID)
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)
 
-			filter := platform.AuthorizationFilter{}
+			filter := influxdb.AuthorizationFilter{}
 			authorizations, _, err := s.FindAuthorizations(ctx, filter)
 			if err != nil {
 				t.Fatalf("failed to retrieve authorizations: %v", err)
@@ -1343,21 +1341,21 @@ func DeleteAuthorization(
 	}
 }
 
-func allUsersPermission(orgID platform.ID) []platform.Permission {
-	return []platform.Permission{
-		{Action: platform.WriteAction, Resource: platform.Resource{Type: platform.UsersResourceType, OrgID: &orgID}},
-		{Action: platform.ReadAction, Resource: platform.Resource{Type: platform.UsersResourceType, OrgID: &orgID}},
+func allUsersPermission(orgID influxdb.ID) []influxdb.Permission {
+	return []influxdb.Permission{
+		{Action: influxdb.WriteAction, Resource: influxdb.Resource{Type: influxdb.UsersResourceType, OrgID: &orgID}},
+		{Action: influxdb.ReadAction, Resource: influxdb.Resource{Type: influxdb.UsersResourceType, OrgID: &orgID}},
 	}
 }
 
-func createUsersPermission(orgID platform.ID) []platform.Permission {
-	return []platform.Permission{
-		{Action: platform.WriteAction, Resource: platform.Resource{Type: platform.UsersResourceType, OrgID: &orgID}},
+func createUsersPermission(orgID influxdb.ID) []influxdb.Permission {
+	return []influxdb.Permission{
+		{Action: influxdb.WriteAction, Resource: influxdb.Resource{Type: influxdb.UsersResourceType, OrgID: &orgID}},
 	}
 }
 
-func deleteUsersPermission(orgID platform.ID) []platform.Permission {
-	return []platform.Permission{
-		{Action: platform.WriteAction, Resource: platform.Resource{Type: platform.UsersResourceType, OrgID: &orgID}},
+func deleteUsersPermission(orgID influxdb.ID) []influxdb.Permission {
+	return []influxdb.Permission{
+		{Action: influxdb.WriteAction, Resource: influxdb.Resource{Type: influxdb.UsersResourceType, OrgID: &orgID}},
 	}
 }

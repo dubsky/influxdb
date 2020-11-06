@@ -19,13 +19,17 @@ import (
 	"github.com/influxdata/flux/csv"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/execute/executetest"
+	"github.com/influxdata/flux/execute/table"
 	"github.com/influxdata/flux/lang"
+	"github.com/influxdata/flux/memory"
 	"github.com/influxdata/flux/runtime"
 	"github.com/influxdata/flux/values"
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/cmd/influxd/launcher"
 	phttp "github.com/influxdata/influxdb/v2/http"
+	"github.com/influxdata/influxdb/v2/kit/feature"
 	"github.com/influxdata/influxdb/v2/kit/prom"
+	"github.com/influxdata/influxdb/v2/mock"
 	"github.com/influxdata/influxdb/v2/query"
 )
 
@@ -128,6 +132,7 @@ func getMemoryUnused(t *testing.T, reg *prom.Registry) int64 {
 	return 0
 }
 
+//lint:ignore U1000 erroneously flagged by staticcheck since it is used in skipped tests
 func checkMemoryUsed(t *testing.T, l *launcher.TestLauncher, concurrency, initial int) {
 	t.Helper()
 
@@ -748,63 +753,982 @@ from(bucket: "%s")
 	}
 }
 
-func TestLauncher_Query_PushDownWindowAggregateAndBareAggregate(t *testing.T) {
-	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
-		"--feature-flags", "pushDownWindowAggregateCount=true,pushDownWindowAggregateSum=true")
-	l.SetupOrFail(t)
-	defer l.ShutdownOrFail(t, ctx)
+type TestQueryProfiler struct {
+	start int64
+}
 
-	l.WritePointsOrFail(t, `
-m0,k=k0 f=0i 0
-m0,k=k0 f=1i 1000000000
-m0,k=k0 f=2i 2000000000
-m0,k=k0 f=3i 3000000000
-m0,k=k0 f=4i 4000000000
-m0,k=k0 f=5i 5000000000
-m0,k=k0 f=6i 6000000000
-m0,k=k0 f=5i 7000000000
-m0,k=k0 f=0i 8000000000
-m0,k=k0 f=6i 9000000000
-m0,k=k0 f=6i 10000000000
-m0,k=k0 f=7i 11000000000
-m0,k=k0 f=5i 12000000000
-m0,k=k0 f=8i 13000000000
-m0,k=k0 f=9i 14000000000
-m0,k=k0 f=5i 15000000000
-`)
+func (s TestQueryProfiler) Name() string {
+	return fmt.Sprintf("query%d", s.start)
+}
 
-	getReadRequestCount := func(op string) uint64 {
-		const metricName = "query_influxdb_source_read_request_duration_seconds"
-		mf := l.Metrics(t)[metricName]
-		if mf != nil {
-			fmt.Printf("%v\n", mf)
-			for _, m := range mf.Metric {
-				for _, label := range m.Label {
-					if label.GetName() == "op" && label.GetValue() == op {
-						return m.Histogram.GetSampleCount()
-					}
-				}
-			}
-		}
-		return 0
+func (s TestQueryProfiler) GetSortedResult(q flux.Query, alloc *memory.Allocator, desc bool, sortKeys ...string) (flux.Table, error) {
+	return nil, nil
+}
+
+func (s TestQueryProfiler) GetResult(q flux.Query, alloc *memory.Allocator) (flux.Table, error) {
+	groupKey := execute.NewGroupKey(
+		[]flux.ColMeta{
+			{
+				Label: "_measurement",
+				Type:  flux.TString,
+			},
+		},
+		[]values.Value{
+			values.NewString(fmt.Sprintf("profiler/query%d", s.start)),
+		},
+	)
+	b := execute.NewColListTableBuilder(groupKey, alloc)
+	colMeta := []flux.ColMeta{
+		{
+			Label: "_measurement",
+			Type:  flux.TString,
+		},
+		{
+			Label: "TotalDuration",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "CompileDuration",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "QueueDuration",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "PlanDuration",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "RequeueDuration",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "ExecuteDuration",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "Concurrency",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "MaxAllocated",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "TotalAllocated",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "RuntimeErrors",
+			Type:  flux.TString,
+		},
+		{
+			Label: "influxdb/scanned-bytes",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "influxdb/scanned-values",
+			Type:  flux.TInt,
+		},
+		{
+			Label: "flux/query-plan",
+			Type:  flux.TString,
+		},
 	}
+	colData := []interface{}{
+		fmt.Sprintf("profiler/query%d", s.start),
+		s.start,
+		s.start + 1,
+		s.start + 2,
+		s.start + 3,
+		s.start + 4,
+		s.start + 5,
+		s.start + 6,
+		s.start + 7,
+		s.start + 8,
+		"error1\nerror2",
+		s.start + 9,
+		s.start + 10,
+		"query plan",
+	}
+	for _, col := range colMeta {
+		if _, err := b.AddCol(col); err != nil {
+			return nil, err
+		}
+	}
+	for i := 0; i < len(colData); i++ {
+		if intValue, ok := colData[i].(int64); ok {
+			b.AppendInt(i, intValue)
+		} else {
+			b.AppendString(i, colData[i].(string))
+		}
+	}
+	tbl, err := b.Table()
+	if err != nil {
+		return nil, err
+	}
+	return tbl, nil
+}
 
-	for _, tt := range []struct {
-		name string
-		q    string
-		op   string
-		res  string
+func NewTestQueryProfiler0() execute.Profiler {
+	return &TestQueryProfiler{start: 0}
+}
+
+func NewTestQueryProfiler100() execute.Profiler {
+	return &TestQueryProfiler{start: 100}
+}
+
+func TestFluxProfiler(t *testing.T) {
+	testcases := []struct {
+		name  string
+		data  []string
+		query string
+		want  string
 	}{
 		{
+			name: "range last single point start time",
+			data: []string{
+				"m,tag=a f=1i 1",
+			},
+			query: `
+option profiler.enabledProfilers = ["query0", "query100", "query100", "NonExistentProfiler"]
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00.000000001Z, stop: 1970-01-01T01:00:00Z)
+	|> last()
+`,
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,tag
+,,0,1970-01-01T00:00:00.000000001Z,1970-01-01T01:00:00Z,1970-01-01T00:00:00.000000001Z,1,f,m,a
+
+#datatype,string,long,string,long,long,long,long,long,long,long,long,long,string,string,long,long
+#group,false,false,true,false,false,false,false,false,false,false,false,false,false,false,false,false
+#default,_profiler,,,,,,,,,,,,,,,
+,result,table,_measurement,TotalDuration,CompileDuration,QueueDuration,PlanDuration,RequeueDuration,ExecuteDuration,Concurrency,MaxAllocated,TotalAllocated,RuntimeErrors,flux/query-plan,influxdb/scanned-bytes,influxdb/scanned-values
+,,0,profiler/query0,0,1,2,3,4,5,6,7,8,"error1
+error2","query plan",9,10
+,,1,profiler/query100,100,101,102,103,104,105,106,107,108,"error1
+error2","query plan",109,110
+`,
+		},
+	}
+	execute.RegisterProfilerFactories(NewTestQueryProfiler0, NewTestQueryProfiler100)
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			l := launcher.RunTestLauncherOrFail(t, ctx, nil)
+
+			l.SetupOrFail(t)
+			defer l.ShutdownOrFail(t, ctx)
+
+			l.WritePointsOrFail(t, strings.Join(tc.data, "\n"))
+
+			queryStr := "import \"profiler\"\nv = {bucket: " + "\"" + l.Bucket.Name + "\"" + "}\n" + tc.query
+			req := &query.Request{
+				Authorization:  l.Auth,
+				OrganizationID: l.Org.ID,
+				Compiler: lang.FluxCompiler{
+					Query: queryStr,
+				},
+			}
+			if got, err := l.FluxQueryService().Query(ctx, req); err != nil {
+				t.Error(err)
+			} else {
+				dec := csv.NewMultiResultDecoder(csv.ResultDecoderConfig{})
+				want, err := dec.Decode(ioutil.NopCloser(strings.NewReader(tc.want)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer want.Release()
+
+				if err := executetest.EqualResultIterators(want, got); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestQueryPushDowns(t *testing.T) {
+	testcases := []struct {
+		name  string
+		data  []string
+		query string
+		op    string
+		want  string
+		skip  string
+	}{
+		{
+			name: "range last single point start time",
+			data: []string{
+				"m,tag=a f=1i 1",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00.000000001Z, stop: 1970-01-01T01:00:00Z)
+	|> last()
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,tag
+,,0,1970-01-01T00:00:00.000000001Z,1970-01-01T01:00:00Z,1970-01-01T00:00:00.000000001Z,1,f,m,a
+`,
+		},
+		{
+			name: "window last",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 3s)
+	|> last()
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:06Z,1970-01-01T00:00:05Z,5,f,m0,k0
+,,1,1970-01-01T00:00:06Z,1970-01-01T00:00:09Z,1970-01-01T00:00:08Z,0,f,m0,k0
+,,2,1970-01-01T00:00:09Z,1970-01-01T00:00:12Z,1970-01-01T00:00:11Z,7,f,m0,k0
+,,3,1970-01-01T00:00:12Z,1970-01-01T00:00:15Z,1970-01-01T00:00:14Z,9,f,m0,k0
+,,4,1970-01-01T00:00:15Z,1970-01-01T00:00:18Z,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "window offset last",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 3s, offset: 2s)
+	|> last()
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:08Z,1970-01-01T00:00:07Z,5,f,m0,k0
+,,1,1970-01-01T00:00:08Z,1970-01-01T00:00:11Z,1970-01-01T00:00:10Z,6,f,m0,k0
+,,2,1970-01-01T00:00:11Z,1970-01-01T00:00:14Z,1970-01-01T00:00:13Z,8,f,m0,k0
+,,3,1970-01-01T00:00:14Z,1970-01-01T00:00:17Z,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "bare last",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> last()
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:20Z,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "window empty last",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1969-12-31T23:00:00Z, stop: 1970-01-01T02:00:00Z)
+	|> window(every: 1h, createEmpty: true)
+	|> last()
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,0,1969-12-31T23:00:00Z,1970-01-01T00:00:00Z,,,f,m0,k0
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,1,1970-01-01T00:00:00Z,1970-01-01T01:00:00Z,1970-01-01T00:00:15Z,5,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,2,1970-01-01T01:00:00Z,1970-01-01T02:00:00Z,,,f,m0,k0
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+`,
+		},
+		{
+			name: "window empty offset last",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1969-12-31T23:00:00Z, stop: 1970-01-01T02:00:00Z)
+	|> window(every: 1h, offset: 1h, createEmpty: true)
+	|> last()
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,0,1969-12-31T23:00:00Z,1970-01-01T00:00:00Z,,,f,m0,k0
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,1,1970-01-01T00:00:00Z,1970-01-01T01:00:00Z,1970-01-01T00:00:15Z,5,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,2,1970-01-01T01:00:00Z,1970-01-01T02:00:00Z,,,f,m0,k0
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+`,
+		},
+		{
+			name: "window aggregate last",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1969-12-31T23:59:59Z, stop: 1970-01-01T00:00:33Z)
+	|> aggregateWindow(every: 10s, fn: last)
+`,
+			op: "readWindow(last)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1969-12-31T23:59:59Z,1970-01-01T00:00:33Z,1970-01-01T00:00:10Z,6,f,m0,k0
+,,0,1969-12-31T23:59:59Z,1970-01-01T00:00:33Z,1970-01-01T00:00:20Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "window first",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 3s)
+	|> first()
+`,
+			op: "readWindow(first)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:06Z,1970-01-01T00:00:05Z,5,f,m0,k0
+,,1,1970-01-01T00:00:06Z,1970-01-01T00:00:09Z,1970-01-01T00:00:06Z,6,f,m0,k0
+,,2,1970-01-01T00:00:09Z,1970-01-01T00:00:12Z,1970-01-01T00:00:09Z,6,f,m0,k0
+,,3,1970-01-01T00:00:12Z,1970-01-01T00:00:15Z,1970-01-01T00:00:12Z,5,f,m0,k0
+,,4,1970-01-01T00:00:15Z,1970-01-01T00:00:18Z,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "window first string",
+			data: []string{
+				"m,tag=a f=\"c\" 2000000000",
+				"m,tag=a f=\"d\" 3000000000",
+				"m,tag=a f=\"h\" 7000000000",
+				"m,tag=a f=\"i\" 8000000000",
+				"m,tag=a f=\"j\" 9000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:10Z)
+	|> window(every: 5s)
+	|> first()
+`,
+			op: "readWindow(first)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,string,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,tag
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:05Z,1970-01-01T00:00:02Z,c,f,m,a
+,,1,1970-01-01T00:00:05Z,1970-01-01T00:00:10Z,1970-01-01T00:00:07Z,h,f,m,a
+`,
+		},
+		{
+			name: "bare first",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> first()
+`,
+			op: "readWindow(first)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:20Z,1970-01-01T00:00:05Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "window empty first",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:02Z)
+	|> window(every: 500ms, createEmpty: true)
+	|> first()
+`,
+			op: "readWindow(first)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+,_result,0,1970-01-01T00:00:00Z,1970-01-01T00:00:00.5Z,1970-01-01T00:00:00Z,0,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,1,1970-01-01T00:00:00.5Z,1970-01-01T00:00:01Z,,,f,m0,k0
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+,_result,2,1970-01-01T00:00:01Z,1970-01-01T00:00:01.5Z,1970-01-01T00:00:01Z,1,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,3,1970-01-01T00:00:01.5Z,1970-01-01T00:00:02Z,,,f,m0,k0
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+`,
+		},
+		{
+			name: "window aggregate first",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:02Z)
+	|> aggregateWindow(every: 500ms, fn: first)
+`,
+			op: "readWindow(first)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:02Z,1970-01-01T00:00:00.5Z,0,f,m0,k0
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:02Z,1970-01-01T00:00:01.5Z,1,f,m0,k0
+`,
+		},
+		{
+			name: "window min",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 3s)
+	|> min()
+`,
+			op: "readWindow(min)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:06Z,1970-01-01T00:00:05Z,5,f,m0,k0
+,,1,1970-01-01T00:00:06Z,1970-01-01T00:00:09Z,1970-01-01T00:00:08Z,0,f,m0,k0
+,,2,1970-01-01T00:00:09Z,1970-01-01T00:00:12Z,1970-01-01T00:00:09Z,6,f,m0,k0
+,,3,1970-01-01T00:00:12Z,1970-01-01T00:00:15Z,1970-01-01T00:00:12Z,5,f,m0,k0
+,,4,1970-01-01T00:00:15Z,1970-01-01T00:00:18Z,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "bare min",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> min()
+`,
+			op: "readWindow(min)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:20Z,1970-01-01T00:00:08Z,0,f,m0,k0
+`,
+		},
+		{
+			name: "window empty min",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:12Z)
+	|> window(every: 3s, createEmpty: true)
+	|> min()
+`,
+			op: "readWindow(min)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+,_result,0,1970-01-01T00:00:00Z,1970-01-01T00:00:03Z,1970-01-01T00:00:00Z,0,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,1,1970-01-01T00:00:03Z,1970-01-01T00:00:06Z,,,f,m0,k0
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+,_result,2,1970-01-01T00:00:06Z,1970-01-01T00:00:09Z,1970-01-01T00:00:08Z,0,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,3,1970-01-01T00:00:09Z,1970-01-01T00:00:12Z,,,f,m0,k0
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+`,
+		},
+		{
+			name: "window aggregate min",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:12Z)
+	|> aggregateWindow(every: 3s, fn: min)
+`,
+			op: "readWindow(min)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:12Z,1970-01-01T00:00:03Z,0,f,m0,k0
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:12Z,1970-01-01T00:00:09Z,0,f,m0,k0
+`,
+		},
+		{
+			name: "window max",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 3s)
+	|> max()
+`,
+			op: "readWindow(max)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:06Z,1970-01-01T00:00:05Z,5,f,m0,k0
+,,1,1970-01-01T00:00:06Z,1970-01-01T00:00:09Z,1970-01-01T00:00:06Z,6,f,m0,k0
+,,2,1970-01-01T00:00:09Z,1970-01-01T00:00:12Z,1970-01-01T00:00:11Z,7,f,m0,k0
+,,3,1970-01-01T00:00:12Z,1970-01-01T00:00:15Z,1970-01-01T00:00:14Z,9,f,m0,k0
+,,4,1970-01-01T00:00:15Z,1970-01-01T00:00:18Z,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
+			name: "bare max",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> max()
+`,
+			op: "readWindow(max)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:20Z,1970-01-01T00:00:14Z,9,f,m0,k0
+`,
+		},
+		{
+			name: "window empty max",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:12Z)
+	|> window(every: 3s, createEmpty: true)
+	|> max()
+`,
+			op: "readWindow(max)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+,_result,0,1970-01-01T00:00:00Z,1970-01-01T00:00:03Z,1970-01-01T00:00:02Z,2,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,1,1970-01-01T00:00:03Z,1970-01-01T00:00:06Z,,,f,m0,k0
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+,_result,2,1970-01-01T00:00:06Z,1970-01-01T00:00:09Z,1970-01-01T00:00:06Z,6,f,m0,k0
+
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,3,1970-01-01T00:00:09Z,1970-01-01T00:00:12Z,,,f,m0,k0
+,_result,table,_start,_stop,_time,_value,_field,_measurement,k
+`,
+		},
+		{
+			name: "window aggregate max",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:12Z)
+	|> aggregateWindow(every: 3s, fn: max)
+`,
+			op: "readWindow(max)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,false,true,true,true
+#default,_result,,,,,,,,
+,result,table,_start,_stop,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:12Z,1970-01-01T00:00:03Z,2,f,m0,k0
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:12Z,1970-01-01T00:00:09Z,6,f,m0,k0
+`,
+		},
+		{
+			name: "window count removes empty series",
+			data: []string{
+				"m,tag=a f=0i 1500000000",
+				"m,tag=b f=1i 2500000000",
+				"m,tag=c f=2i 3500000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:01Z, stop: 1970-01-01T00:00:02Z)
+	|> window(every: 500ms, createEmpty: true)
+	|> count()
+`,
+			op: "readWindow(count)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,true,true,true
+#default,_result,,,,,,,
+,result,table,_start,_stop,_value,_field,_measurement,tag
+,_result,0,1970-01-01T00:00:01Z,1970-01-01T00:00:01.5Z,0,f,m,a
+,_result,1,1970-01-01T00:00:01.5Z,1970-01-01T00:00:02Z,1,f,m,a
+`,
+		},
+		{
 			name: "count",
-			q: `
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> aggregateWindow(every: 5s, fn: count)
 	|> drop(columns: ["_start", "_stop"])
 `,
 			op: "readWindow(count)",
-			res: `
+			want: `
 #datatype,string,long,dateTime:RFC3339,long,string,string,string
 #group,false,false,false,false,true,true,true
 #default,_result,,,,,,
@@ -815,15 +1739,103 @@ from(bucket: v.bucket)
 `,
 		},
 		{
+			name: "window offset count",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> window(every: 5s, offset: 2s)
+	|> count()
+`,
+			op: "readWindow(count)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,true,true,true
+#default,_result,,,,,,,
+,result,table,_start,_stop,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:02Z,2,f,m0,k0
+,,1,1970-01-01T00:00:02Z,1970-01-01T00:00:07Z,5,f,m0,k0
+,,2,1970-01-01T00:00:07Z,1970-01-01T00:00:12Z,5,f,m0,k0
+,,3,1970-01-01T00:00:12Z,1970-01-01T00:00:15Z,3,f,m0,k0
+`,
+		},
+		{
+			name: "count with nulls",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> aggregateWindow(every: 5s, fn: count)
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readWindow(count)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,long,string,string,string
+#group,false,false,false,false,true,true,true
+#default,_result,,,,,,
+,result,table,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,5,f,m0,k0
+,,0,1970-01-01T00:00:10Z,0,f,m0,k0
+,,0,1970-01-01T00:00:15Z,5,f,m0,k0
+`,
+		},
+		{
 			name: "bare count",
-			q: `
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> count()
 	|> drop(columns: ["_start", "_stop"])
 `,
 			op: "readWindow(count)",
-			res: `
+			want: `
 #group,false,false,false,true,true,true
 #datatype,string,long,long,string,string,string
 #default,_result,,,,,
@@ -832,15 +1844,57 @@ from(bucket: v.bucket)
 `,
 		},
 		{
+			name: "window sum removes empty series",
+			data: []string{
+				"m,tag=a f=1i 1500000000",
+				"m,tag=a f=2i 1600000000",
+				"m,tag=b f=3i 2500000000",
+				"m,tag=c f=4i 3500000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:01Z, stop: 1970-01-01T00:00:02Z)
+	|> window(every: 500ms, createEmpty: true)
+	|> sum()
+`,
+			op: "readWindow(sum)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,true,true,true
+#default,_result,,,,,,,
+,result,table,_start,_stop,_value,_field,_measurement,tag
+,_result,0,1970-01-01T00:00:01Z,1970-01-01T00:00:01.5Z,,f,m,a
+,_result,1,1970-01-01T00:00:01.5Z,1970-01-01T00:00:02Z,3,f,m,a
+`,
+		},
+		{
 			name: "sum",
-			q: `
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> aggregateWindow(every: 5s, fn: sum)
 	|> drop(columns: ["_start", "_stop"])
 `,
 			op: "readWindow(sum)",
-			res: `
+			want: `
 #datatype,string,long,dateTime:RFC3339,long,string,string,string
 #group,false,false,false,false,true,true,true
 #default,_result,,,,,,
@@ -851,15 +1905,103 @@ from(bucket: v.bucket)
 `,
 		},
 		{
+			name: "window offset sum",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> window(every: 5s, offset: 2s)
+	|> sum()
+`,
+			op: "readWindow(sum)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,long,string,string,string
+#group,false,false,true,true,false,true,true,true
+#default,_result,,,,,,,
+,result,table,_start,_stop,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:00Z,1970-01-01T00:00:02Z,1,f,m0,k0
+,,1,1970-01-01T00:00:02Z,1970-01-01T00:00:07Z,20,f,m0,k0
+,,2,1970-01-01T00:00:07Z,1970-01-01T00:00:12Z,24,f,m0,k0
+,,3,1970-01-01T00:00:12Z,1970-01-01T00:00:15Z,22,f,m0,k0
+`,
+		},
+		{
+			name: "sum with nulls",
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> aggregateWindow(every: 5s, fn: sum)
+	|> drop(columns: ["_start", "_stop"])
+`,
+			op: "readWindow(sum)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,long,string,string,string
+#group,false,false,false,false,true,true,true
+#default,_result,,,,,,
+,result,table,_time,_value,_field,_measurement,k
+,,0,1970-01-01T00:00:05Z,10,f,m0,k0
+,,0,1970-01-01T00:00:10Z,,f,m0,k0
+,,0,1970-01-01T00:00:15Z,35,f,m0,k0
+`,
+		},
+		{
 			name: "bare sum",
-			q: `
+			data: []string{
+				"m0,k=k0 f=0i 0",
+				"m0,k=k0 f=1i 1000000000",
+				"m0,k=k0 f=2i 2000000000",
+				"m0,k=k0 f=3i 3000000000",
+				"m0,k=k0 f=4i 4000000000",
+				"m0,k=k0 f=5i 5000000000",
+				"m0,k=k0 f=6i 6000000000",
+				"m0,k=k0 f=5i 7000000000",
+				"m0,k=k0 f=0i 8000000000",
+				"m0,k=k0 f=6i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=5i 12000000000",
+				"m0,k=k0 f=8i 13000000000",
+				"m0,k=k0 f=9i 14000000000",
+				"m0,k=k0 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> sum()
 	|> drop(columns: ["_start", "_stop"])
 `,
 			op: "readWindow(sum)",
-			res: `
+			want: `
 #group,false,false,false,true,true,true
 #datatype,string,long,long,string,string,string
 #default,_result,,,,,
@@ -867,93 +2009,166 @@ from(bucket: v.bucket)
 ,,0,67,f,m0,k0
 `,
 		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			wantCount := getReadRequestCount(tt.op) + 1
-
-			prelude := fmt.Sprintf("v = {bucket: \"%s\", timeRangeStart: 1970-01-01T00:00:00Z, timeRangeStop: 1970-01-01T00:00:15Z}", l.Bucket.Name)
-			queryStr := prelude + "\n" + tt.q
-			res := l.MustExecuteQuery(queryStr)
-			defer res.Done()
-			got := flux.NewSliceResultIterator(res.Results)
-			defer got.Release()
-
-			dec := csv.NewMultiResultDecoder(csv.ResultDecoderConfig{})
-			want, err := dec.Decode(ioutil.NopCloser(strings.NewReader(tt.res)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer want.Release()
-
-			if err := executetest.EqualResultIterators(want, got); err != nil {
-				t.Fatal(err)
-			}
-
-			if want, got := wantCount, getReadRequestCount(tt.op); want != got {
-				t.Fatalf("unexpected sample count -want/+got:\n\t- %d\n\t+ %d", want, got)
-			}
-		})
-	}
-}
-
-func TestLauncher_Query_PushDownGroupAggregate(t *testing.T) {
-	l := launcher.RunTestLauncherOrFail(t, ctx, nil,
-		"--feature-flags",
-		"pushDownGroupAggregateCount=true",
-		"--feature-flags",
-		"pushDownGroupAggregateSum=true",
-		"--feature-flags",
-		"pushDownGroupAggregateFirst=true",
-		"--feature-flags",
-		"pushDownGroupAggregateLast=true",
-	)
-	l.SetupOrFail(t)
-	defer l.ShutdownOrFail(t, ctx)
-
-	l.WritePointsOrFail(t, `
-m0,k=k0,kk=kk0 f=0i 0
-m0,k=k0,kk=kk1 f=1i 1000000000
-m0,k=k0,kk=kk0 f=2i 2000000000
-m0,k=k0,kk=kk1 f=3i 3000000000
-m0,k=k0,kk=kk0 f=4i 4000000000
-m0,k=k0,kk=kk1 f=5i 5000000000
-m0,k=k0,kk=kk0 f=6i 6000000000
-m0,k=k0,kk=kk1 f=5i 7000000000
-m0,k=k0,kk=kk0 f=0i 8000000000
-m0,k=k0,kk=kk1 f=6i 9000000000
-m0,k=k0,kk=kk0 f=6i 10000000000
-m0,k=k0,kk=kk1 f=7i 11000000000
-m0,k=k0,kk=kk0 f=5i 12000000000
-m0,k=k0,kk=kk1 f=8i 13000000000
-m0,k=k0,kk=kk0 f=9i 14000000000
-m0,k=k0,kk=kk1 f=5i 15000000000
-`)
-
-	getReadRequestCount := func(op string) uint64 {
-		const metricName = "query_influxdb_source_read_request_duration_seconds"
-		mf := l.Metrics(t)[metricName]
-		if mf != nil {
-			fmt.Printf("%v\n", mf)
-			for _, m := range mf.Metric {
-				for _, label := range m.Label {
-					if label.GetName() == "op" && label.GetValue() == op {
-						return m.Histogram.GetSampleCount()
-					}
-				}
-			}
-		}
-		return 0
-	}
-
-	for _, tt := range []struct {
-		name string
-		q    string
-		op   string
-		res  string
-	}{
+		{
+			name: "bare mean",
+			data: []string{
+				"m0,k=k0,kk=kk0 f=5 0",
+				"m0,k=k0,kk=kk0 f=6 5000000000",
+				"m0,k=k0,kk=kk0 f=7 10000000000",
+				"m0,k=k0,kk=kk0 f=9 15000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 0)
+	|> mean()
+	|> keep(columns: ["_value"])
+`,
+			op: "readWindow(mean)",
+			want: `
+#datatype,string,long,double
+#group,false,false,false
+#default,_result,,
+,result,table,_value
+,,0,6.75
+`,
+		},
+		{
+			name: "window mean",
+			data: []string{
+				"m0,k=k0 f=1i 5000000000",
+				"m0,k=k0 f=2i 6000000000",
+				"m0,k=k0 f=3i 7000000000",
+				"m0,k=k0 f=4i 8000000000",
+				"m0,k=k0 f=5i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=8i 12000000000",
+				"m0,k=k0 f=9i 13000000000",
+				"m0,k=k0 f=10i 14000000000",
+				"m0,k=k0 f=11i 15000000000",
+				"m0,k=k0 f=12i 16000000000",
+				"m0,k=k0 f=13i 17000000000",
+				"m0,k=k0 f=14i 18000000000",
+				"m0,k=k0 f=16i 19000000000",
+				"m0,k=k0 f=17i 20000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> aggregateWindow(fn: mean, every: 5s)
+	|> keep(columns: ["_time", "_value"])
+`,
+			op: "readWindow(mean)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,double
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,,0,1970-01-01T00:00:10Z,3
+,,0,1970-01-01T00:00:15Z,8
+,,0,1970-01-01T00:00:20Z,13.2
+`,
+		},
+		{
+			name: "window mean offset",
+			data: []string{
+				"m0,k=k0 f=1i 5000000000",
+				"m0,k=k0 f=2i 6000000000",
+				"m0,k=k0 f=3i 7000000000",
+				"m0,k=k0 f=4i 8000000000",
+				"m0,k=k0 f=5i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=8i 12000000000",
+				"m0,k=k0 f=9i 13000000000",
+				"m0,k=k0 f=10i 14000000000",
+				"m0,k=k0 f=11i 15000000000",
+				"m0,k=k0 f=12i 16000000000",
+				"m0,k=k0 f=13i 17000000000",
+				"m0,k=k0 f=14i 18000000000",
+				"m0,k=k0 f=16i 19000000000",
+				"m0,k=k0 f=17i 20000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 5s, offset: 1s)
+	|> mean()
+`,
+			op: "readWindow(mean)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,string,string,string,double
+#group,false,false,true,true,true,true,true,false
+#default,_result,,,,,,,
+,result,table,_start,_stop,_field,_measurement,k,_value
+,,0,1970-01-01T00:00:05Z,1970-01-01T00:00:06Z,f,m0,k0,1
+,,1,1970-01-01T00:00:06Z,1970-01-01T00:00:11Z,f,m0,k0,4
+,,2,1970-01-01T00:00:11Z,1970-01-01T00:00:16Z,f,m0,k0,9
+,,3,1970-01-01T00:00:16Z,1970-01-01T00:00:20Z,f,m0,k0,13.75
+`,
+		},
+		{
+			name: "window mean offset with duplicate and unwindow",
+			data: []string{
+				"m0,k=k0 f=1i 5000000000",
+				"m0,k=k0 f=2i 6000000000",
+				"m0,k=k0 f=3i 7000000000",
+				"m0,k=k0 f=4i 8000000000",
+				"m0,k=k0 f=5i 9000000000",
+				"m0,k=k0 f=6i 10000000000",
+				"m0,k=k0 f=7i 11000000000",
+				"m0,k=k0 f=8i 12000000000",
+				"m0,k=k0 f=9i 13000000000",
+				"m0,k=k0 f=10i 14000000000",
+				"m0,k=k0 f=11i 15000000000",
+				"m0,k=k0 f=12i 16000000000",
+				"m0,k=k0 f=13i 17000000000",
+				"m0,k=k0 f=14i 18000000000",
+				"m0,k=k0 f=16i 19000000000",
+				"m0,k=k0 f=17i 20000000000",
+			},
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:05Z, stop: 1970-01-01T00:00:20Z)
+	|> window(every: 5s, offset: 1s)
+	|> mean()
+	|> duplicate(column: "_stop", as: "_time")
+	|> window(every: inf)
+	|> keep(columns: ["_time", "_value"])
+`,
+			op: "readWindow(mean)",
+			want: `
+#datatype,string,long,dateTime:RFC3339,double
+#group,false,false,false,false
+#default,_result,,,
+,result,table,_time,_value
+,,0,1970-01-01T00:00:06Z,1
+,,0,1970-01-01T00:00:11Z,4
+,,0,1970-01-01T00:00:16Z,9
+,,0,1970-01-01T00:00:20Z,13.75
+`,
+		},
 		{
 			name: "group first",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 0)
 	|> group(columns: ["k"])
@@ -961,17 +2176,36 @@ from(bucket: v.bucket)
 	|> keep(columns: ["_time", "_value"])
 `,
 			op: "readGroup(first)",
-			res: `
+			want: `
 #datatype,string,long,dateTime:RFC3339,long
 #group,false,false,false,false
 #default,_result,,,
 ,result,table,_time,_value
 ,,0,1970-01-01T00:00:00.00Z,0
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "group none first",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 0)
 	|> group()
@@ -979,17 +2213,36 @@ from(bucket: v.bucket)
 	|> keep(columns: ["_time", "_value"])
 `,
 			op: "readGroup(first)",
-			res: `
+			want: `
 #datatype,string,long,dateTime:RFC3339,long
 #group,false,false,false,false
 #default,_result,,,
 ,result,table,_time,_value
 ,,0,1970-01-01T00:00:00.00Z,0
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "group last",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 0)
 	|> group(columns: ["k"])
@@ -997,17 +2250,36 @@ from(bucket: v.bucket)
 	|> keep(columns: ["_time", "_value"])
 `,
 			op: "readGroup(last)",
-			res: `
+			want: `
 #datatype,string,long,dateTime:RFC3339,long
 #group,false,false,false,false
 #default,_result,,,
 ,result,table,_time,_value
 ,,0,1970-01-01T00:00:15.00Z,5
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "group none last",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 0)
 	|> group()
@@ -1015,17 +2287,36 @@ from(bucket: v.bucket)
 	|> keep(columns: ["_time", "_value"])
 `,
 			op: "readGroup(last)",
-			res: `
+			want: `
 #datatype,string,long,dateTime:RFC3339,long
 #group,false,false,false,false
 #default,_result,,,
 ,result,table,_time,_value
 ,,0,1970-01-01T00:00:15.00Z,5
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "count group none",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> group()
@@ -1033,25 +2324,44 @@ from(bucket: v.bucket)
 	|> drop(columns: ["_start", "_stop"])
 `,
 			op: "readGroup(count)",
-			res: `
+			want: `
 #datatype,string,long,long
 #group,false,false,false
 #default,_result,,
 ,result,table,_value
 ,,0,15
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "count group",
-			op:   "readGroup(count)",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			op: "readGroup(count)",
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> group(columns: ["kk"])
 	|> count()
 	|> drop(columns: ["_start", "_stop"])
 `,
-			res: `
+			want: `
 #datatype,string,long,string,long
 #group,false,false,true,false
 #default,_result,,,
@@ -1059,10 +2369,29 @@ from(bucket: v.bucket)
 ,,0,kk0,8
 ,,1,kk1,7
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "sum group none",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> group()
@@ -1070,25 +2399,44 @@ from(bucket: v.bucket)
 	|> drop(columns: ["_start", "_stop"])
 `,
 			op: "readGroup(sum)",
-			res: `
+			want: `
 #datatype,string,long,long
 #group,false,false,false
 #default,_result,,
 ,result,table,_value
 ,,0,67
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
 		{
 			name: "sum group",
-			op:   "readGroup(sum)",
-			q: `
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			op: "readGroup(sum)",
+			query: `
 from(bucket: v.bucket)
 	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
 	|> group(columns: ["kk"])
 	|> sum()
 	|> drop(columns: ["_start", "_stop"])
 `,
-			res: `
+			want: `
 #datatype,string,long,string,long
 #group,false,false,true,false
 #default,_result,,,
@@ -1096,32 +2444,174 @@ from(bucket: v.bucket)
 ,,0,kk0,32
 ,,1,kk1,35
 `,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
 		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			wantCount := getReadRequestCount(tt.op) + 1
+		{
+			name: "min group",
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			op: "readGroup(min)",
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> group(columns: ["kk"])
+	|> min()
+	|> keep(columns: ["kk", "_value"])
+`,
+			want: `
+#datatype,string,long,string,long
+#group,false,false,true,false
+#default,_result,,,
+,result,table,kk,_value
+,,0,kk0,0
+,,1,kk1,1
+`,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
+		},
+		{
+			name: "max group",
+			data: []string{
+				"m0,k=k0,kk=kk0 f=0i 0",
+				"m0,k=k0,kk=kk1 f=1i 1000000000",
+				"m0,k=k0,kk=kk0 f=2i 2000000000",
+				"m0,k=k0,kk=kk1 f=3i 3000000000",
+				"m0,k=k0,kk=kk0 f=4i 4000000000",
+				"m0,k=k0,kk=kk1 f=5i 5000000000",
+				"m0,k=k0,kk=kk0 f=6i 6000000000",
+				"m0,k=k0,kk=kk1 f=5i 7000000000",
+				"m0,k=k0,kk=kk0 f=0i 8000000000",
+				"m0,k=k0,kk=kk1 f=6i 9000000000",
+				"m0,k=k0,kk=kk0 f=6i 10000000000",
+				"m0,k=k0,kk=kk1 f=7i 11000000000",
+				"m0,k=k0,kk=kk0 f=5i 12000000000",
+				"m0,k=k0,kk=kk1 f=8i 13000000000",
+				"m0,k=k0,kk=kk0 f=9i 14000000000",
+				"m0,k=k0,kk=kk1 f=5i 15000000000",
+			},
+			op: "readGroup(max)",
+			query: `
+from(bucket: v.bucket)
+	|> range(start: 1970-01-01T00:00:00Z, stop: 1970-01-01T00:00:15Z)
+	|> group(columns: ["kk"])
+	|> max()
+	|> keep(columns: ["kk", "_value"])
+`,
+			want: `
+#datatype,string,long,string,long
+#group,false,false,true,false
+#default,_result,,,
+,result,table,kk,_value
+,,0,kk0,9
+,,1,kk1,8
+`,
+			skip: "https://github.com/influxdata/idpe/issues/8828",
+		},
+	}
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.skip != "" {
+				t.Skip(tc.skip)
+			}
+			l := launcher.RunTestLauncherOrFail(t, ctx, mock.NewFlagger(map[feature.Flag]interface{}{}))
 
-			prelude := fmt.Sprintf("v = {bucket: \"%s\", timeRangeStart: 1970-01-01T00:00:00Z, timeRangeStop: 1970-01-01T00:00:15Z}", l.Bucket.Name)
-			queryStr := prelude + "\n" + tt.q
+			l.SetupOrFail(t)
+			defer l.ShutdownOrFail(t, ctx)
+
+			l.WritePointsOrFail(t, strings.Join(tc.data, "\n"))
+
+			queryStr := "v = {bucket: " + "\"" + l.Bucket.Name + "\"" + "}\n" + tc.query
+
 			res := l.MustExecuteQuery(queryStr)
 			defer res.Done()
 			got := flux.NewSliceResultIterator(res.Results)
 			defer got.Release()
 
 			dec := csv.NewMultiResultDecoder(csv.ResultDecoderConfig{})
-			want, err := dec.Decode(ioutil.NopCloser(strings.NewReader(tt.res)))
+			want, err := dec.Decode(ioutil.NopCloser(strings.NewReader(tc.want)))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer want.Release()
 
 			if err := executetest.EqualResultIterators(want, got); err != nil {
-				t.Error(err)
+				t.Fatal(err)
 			}
-
-			if want, got := wantCount, getReadRequestCount(tt.op); want != got {
+			if want, got := uint64(1), l.NumReads(t, tc.op); want != got {
 				t.Fatalf("unexpected sample count -want/+got:\n\t- %d\n\t+ %d", want, got)
 			}
 		})
+	}
+}
+
+func TestLauncher_Query_Buckets_MultiplePages(t *testing.T) {
+	l := launcher.RunTestLauncherOrFail(t, ctx, nil)
+	l.SetupOrFail(t)
+	defer l.ShutdownOrFail(t, ctx)
+
+	// Create a large number of buckets. This is above the default
+	// page size of 20.
+	for i := 0; i < 50; i++ {
+		b := &influxdb.Bucket{
+			OrgID: l.Org.ID,
+			Name:  fmt.Sprintf("b%02d", i),
+		}
+		if err := l.BucketService(t).CreateBucket(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`
+#datatype,string,long,string
+#group,false,false,false
+#default,_result,,
+,result,table,name
+,,0,BUCKET
+,,0,_monitoring
+,,0,_tasks
+`)
+	for i := 0; i < 50; i++ {
+		_, _ = fmt.Fprintf(&sb, ",,0,b%02d\n", i)
+	}
+	data := sb.String()
+
+	bucketsQuery := `
+buckets()
+	|> keep(columns: ["name"])
+	|> sort(columns: ["name"])
+`
+	res := l.MustExecuteQuery(bucketsQuery)
+	defer res.Done()
+
+	firstResult := func(ri flux.ResultIterator) flux.Result {
+		ri.More()
+		return ri.Next()
+	}
+	got := firstResult(flux.NewSliceResultIterator(res.Results))
+
+	want, err := csv.NewResultDecoder(csv.ResultDecoderConfig{}).Decode(strings.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := table.Diff(want.Tables(), got.Tables()); diff != "" {
+		t.Fatalf("unexpected output -want/+got:\n%s", diff)
 	}
 }

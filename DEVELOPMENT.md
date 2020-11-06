@@ -41,7 +41,7 @@ cd ui
 yarn && yarn start
 ```
 
-If there are no errors, hit [localhost:8080](http://localhost:8080) and follow the prompts to setup your username and password. *Note the port difference: `8080` vs the production `9999`*
+If there are no errors, hit [localhost:8080](http://localhost:8080) and follow the prompts to setup your username and password. *Note the port difference: `8080` vs the production `8086`*
 
 You're set up to develop Influx locally. Any changes you make to front-end code under the `ui/` directory will be updated after the watcher process (that was initiated by running `yarn start`) sees them and rebuilds the bundle. Any changes to go code will need to be re-compiled by re-running the `go run` command above.
 
@@ -65,7 +65,7 @@ Tab 1:
 go run ./cmd/influxd --assets-path=ui/build
 ```
 
-This starts the influxdb application server. It handles API requests and can be reached via `localhost:9999`. Any changes to go code will need to be re-compiled by re-running the `go run` command above.
+This starts the influxdb application server. It handles API requests and can be reached via `localhost:8086`. Any changes to go code will need to be re-compiled by re-running the `go run` command above.
 
 Tab 2:
 
@@ -93,7 +93,7 @@ Your browser should reload the page after you save your changes (sometimes this 
 
 ## Getting some Graphs
 
-If you haven't set up telegraf yet, [following the official telegraf documentation](https://v2.docs.influxdata.com/v2.0/write-data/use-telegraf/) is the quickest and most straightforward and hassle-free way of getting some data into your local instance. The documentation there will be kept fresher and and more current than this tutorial.
+If you haven't set up telegraf yet, [following the official telegraf documentation](https://v2.docs.influxdata.com/v2.0/write-data/no-code/use-telegraf/) is the quickest and most straightforward and hassle-free way of getting some data into your local instance. The documentation there will be kept fresher and and more current than this tutorial.
 
 Learning how to input Line protocol data is a great tool if you need to debug with arbitrary adhoc data. Check out a quick intro to the [Line protocol](https://v2.docs.influxdata.com/v2.0/write-data/#what-you-ll-need), and learn how to [input it via the ui.](https://v2.docs.influxdata.com/v2.0/write-data/#user-interface) *Since we're running `influxd` locally, you can skip step 1.*
 

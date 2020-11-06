@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/ast"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/lang"
@@ -19,12 +18,12 @@ import (
 	platform "github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/cmd/influxd/launcher"
 	influxdbcontext "github.com/influxdata/influxdb/v2/context"
+	"github.com/influxdata/influxdb/v2/kit/feature"
+	"github.com/influxdata/influxdb/v2/kit/feature/override"
 	"github.com/influxdata/influxdb/v2/mock"
 	"github.com/influxdata/influxdb/v2/query"
 	_ "github.com/influxdata/influxdb/v2/query/stdlib"
 	itesting "github.com/influxdata/influxdb/v2/query/stdlib/testing" // Import the stdlib
-	"github.com/influxdata/influxdb/v2/kit/feature"
-	"github.com/influxdata/influxdb/v2/kit/feature/override"
 )
 
 // Flagger for end-to-end test cases. This flagger contains a pointer to a
@@ -40,10 +39,10 @@ type Flagger struct {
 }
 
 type FlaggerState struct {
-	Path             string
-	Name             string
-	FeatureFlags     itesting.PerTestFeatureFlagMap
-	DefaultFlagger   feature.Flagger
+	Path           string
+	Name           string
+	FeatureFlags   itesting.PerTestFeatureFlagMap
+	DefaultFlagger feature.Flagger
 }
 
 func newFlagger(featureFlagMap itesting.PerTestFeatureFlagMap) Flagger {
@@ -63,7 +62,7 @@ func (f Flagger) Flags(ctx context.Context, _f ...feature.Flag) (map[string]inte
 	// and use it's computed flags.
 	overrides := f.flaggerState.FeatureFlags[f.flaggerState.Path][f.flaggerState.Name]
 	if overrides != nil {
-		f, err := override.Make( overrides, nil )
+		f, err := override.Make(overrides, nil)
 		if err != nil {
 			panic("failed to construct override flagger, probably an invalid flag in FluxEndToEndFeatureFlags")
 		}
@@ -71,9 +70,8 @@ func (f Flagger) Flags(ctx context.Context, _f ...feature.Flag) (map[string]inte
 	}
 
 	// Otherwise use flags from a default flagger.
-	return f.flaggerState.DefaultFlagger.Flags( ctx )
+	return f.flaggerState.DefaultFlagger.Flags(ctx)
 }
-
 
 // Default context.
 var ctx = influxdbcontext.SetAuthorizer(context.Background(), mock.NewMockAuthorizer(true, nil))
@@ -153,31 +151,47 @@ func makeTestPackage(file *ast.File) *ast.Package {
 	return pkg
 }
 
-var optionsSource = `
+// This options definition puts to() in the path of the CSV input. The tests
+// get run in this case and they would normally pass, if we checked the
+// results, but don't look at them.
+var writeOptSource = `
 import "testing"
 import c "csv"
 
-// Options bucket and org are defined dynamically per test
+option testing.loadStorage = (csv) => {
+	return c.from(csv: csv) |> to(bucket: bucket, org: org)
+}
+`
+
+// This options definition is for the second run, the test run. It loads the
+// data from previously written bucket. We check the results after runnig this
+// second pass and report on them.
+var readOptSource = `
+import "testing"
+import c "csv"
 
 option testing.loadStorage = (csv) => {
-	c.from(csv: csv) |> to(bucket: bucket, org: org)
 	return from(bucket: bucket)
 }
 `
-var optionsAST *ast.File
 
-func init() {
+var writeOptAST *ast.File
+var readOptAST *ast.File
+
+func prepareOptions(optionsSource string) *ast.File {
 	pkg := parser.ParseSource(optionsSource)
 	if ast.Check(pkg) > 0 {
 		panic(ast.GetError(pkg))
 	}
-	optionsAST = pkg.Files[0]
+	return pkg.Files[0]
+}
+
+func init() {
+	writeOptAST = prepareOptions(writeOptSource)
+	readOptAST = prepareOptions(readOptSource)
 }
 
 func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
-
-	// Query server to ensure write persists.
-
 	b := &platform.Bucket{
 		OrgID:           l.Org.ID,
 		Name:            t.Name(),
@@ -188,6 +202,11 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 	if err := s.CreateBucket(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		if err := s.DeleteBucket(context.Background(), b.ID); err != nil {
+			t.Logf("Failed to delete bucket: %s", err)
+		}
+	}()
 
 	// Define bucket and org options
 	bucketOpt := &ast.OptionStatement{
@@ -202,6 +221,34 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 			Init: &ast.StringLiteral{Value: l.Org.Name},
 		},
 	}
+
+	executeWithOptions(t, l, bucketOpt, orgOpt, writeOptAST, file)
+
+	results := executeWithOptions(t, l, bucketOpt, orgOpt, readOptAST, file)
+	if results != nil {
+		logFormatted := func(name string, results map[string]*bytes.Buffer) {
+			if _, ok := results[name]; ok {
+				scanner := bufio.NewScanner(results[name])
+				for scanner.Scan() {
+					t.Log(scanner.Text())
+				}
+			} else {
+				t.Log("table ", name, " not present in results")
+			}
+		}
+		if _, ok := results["diff"]; ok {
+			t.Error("diff table was not empty")
+			logFormatted("diff", results)
+			logFormatted("want", results)
+			logFormatted("got", results)
+		}
+	}
+}
+
+func executeWithOptions(t testing.TB, l *launcher.TestLauncher, bucketOpt *ast.OptionStatement,
+	orgOpt *ast.OptionStatement, optionsAST *ast.File, file *ast.File) map[string]*bytes.Buffer {
+	var results map[string]*bytes.Buffer
+
 	options := optionsAST.Copy().(*ast.File)
 	options.Body = append([]ast.Statement{bucketOpt, orgOpt}, options.Body...)
 
@@ -209,7 +256,7 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 	pkg := makeTestPackage(file)
 	pkg.Files = append(pkg.Files, options)
 
-	// Add testing.inspect call to ensure the data is loaded
+	// Use testing.inspect call to get all of diff, want, and got
 	inspectCalls := stdlib.TestingInspectCalls(pkg)
 	pkg.Files = append(pkg.Files, inspectCalls)
 
@@ -222,85 +269,19 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 		OrganizationID: l.Org.ID,
 		Compiler:       lang.ASTCompiler{AST: bs},
 	}
+
 	if r, err := l.FluxQueryService().Query(ctx, req); err != nil {
 		t.Fatal(err)
 	} else {
+		results = make(map[string]*bytes.Buffer)
+
 		for r.More() {
 			v := r.Next()
-			if err := v.Tables().Do(func(tbl flux.Table) error {
-				return tbl.Do(func(reader flux.ColReader) error {
-					return nil
-				})
-			}); err != nil {
-				t.Error(err)
+
+			if _, ok := results[v.Name()]; !ok {
+				results[v.Name()] = &bytes.Buffer{}
 			}
-		}
-	}
-
-	// quirk: our execution engine doesn't guarantee the order of execution for disconnected DAGS
-	// so that our function-with-side effects call to `to` may run _after_ the test instead of before.
-	// running twice makes sure that `to` happens at least once before we run the test.
-	// this time we use a call to `run` so that the assertion error is triggered
-	runCalls := stdlib.TestingRunCalls(pkg)
-	pkg.Files[len(pkg.Files)-1] = runCalls
-
-	bs, err = json.Marshal(pkg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	req = &query.Request{
-		OrganizationID: l.Org.ID,
-		Compiler:       lang.ASTCompiler{AST: bs},
-	}
-	r, err := l.FluxQueryService().Query(ctx, req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	needInspect := false
-	for r.More() {
-		v := r.Next()
-		if err := v.Tables().Do(func(tbl flux.Table) error {
-			return tbl.Do(func(reader flux.ColReader) error {
-				return nil
-			})
-		}); err != nil {
-			needInspect = true
-			t.Error(err)
-		}
-	}
-	if err := r.Err(); err != nil {
-		t.Error(err)
-		needInspect = true
-	}
-	if needInspect {
-		// Replace the testing.run calls with testing.inspect calls.
-		pkg.Files[len(pkg.Files)-1] = inspectCalls
-		bs, err = json.Marshal(pkg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req = &query.Request{
-			OrganizationID: l.Org.ID,
-			Compiler:       lang.ASTCompiler{AST: bs},
-		}
-		r, err := l.FluxQueryService().Query(ctx, req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var out bytes.Buffer
-		defer func() {
-			if t.Failed() {
-				scanner := bufio.NewScanner(&out)
-				for scanner.Scan() {
-					t.Log(scanner.Text())
-				}
-			}
-		}()
-		for r.More() {
-			v := r.Next()
-			err := execute.FormatResult(&out, v)
+			err := execute.FormatResult(results[v.Name()], v)
 			if err != nil {
 				t.Error(err)
 			}
@@ -309,4 +290,5 @@ func testFlux(t testing.TB, l *launcher.TestLauncher, file *ast.File) {
 			t.Error(err)
 		}
 	}
+	return results
 }

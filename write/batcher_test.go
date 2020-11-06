@@ -2,6 +2,7 @@ package write
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	platform "github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/mock"
+	"github.com/influxdata/influxdb/v2/pkg/testing/assert"
 )
 
 func TestScanLines(t *testing.T) {
@@ -76,21 +78,18 @@ func TestBatcher_read(t *testing.T) {
 	type args struct {
 		cancel bool
 		r      io.Reader
-		lines  chan []byte
-		errC   chan error
+		max    int
 	}
 	tests := []struct {
-		name    string
-		args    args
-		want    []string
-		wantErr bool
+		name   string
+		args   args
+		want   []string
+		expErr error
 	}{
 		{
 			name: "reading two lines produces 2 lines",
 			args: args{
-				r:     strings.NewReader("m1,t1=v1 f1=1\nm2,t2=v2 f2=2"),
-				lines: make(chan []byte),
-				errC:  make(chan error, 1),
+				r: strings.NewReader("m1,t1=v1 f1=1\nm2,t2=v2 f2=2"),
 			},
 			want: []string{"m1,t1=v1 f1=1\n", "m2,t2=v2 f2=2"},
 		},
@@ -99,21 +98,42 @@ func TestBatcher_read(t *testing.T) {
 			args: args{
 				cancel: true,
 				r:      strings.NewReader("m1,t1=v1 f1=1"),
-				lines:  make(chan []byte),
-				errC:   make(chan error, 1),
 			},
-			want:    []string{},
-			wantErr: true,
+			want:   nil,
+			expErr: context.Canceled,
 		},
 		{
 			name: "error from reader returns error",
 			args: args{
-				r:     &errorReader{},
-				lines: make(chan []byte),
-				errC:  make(chan error, 1),
+				r: &errorReader{},
 			},
-			want:    []string{},
-			wantErr: true,
+			want:   nil,
+			expErr: fmt.Errorf("error"),
+		},
+		{
+			name: "error when input exceeds max line length",
+			args: args{
+				r:   strings.NewReader("m1,t1=v1 f1=1"),
+				max: 5,
+			},
+			want:   nil,
+			expErr: ErrLineTooLong,
+		},
+		{
+			name: "lines greater than MaxScanTokenSize are allowed",
+			args: args{
+				r:   strings.NewReader(strings.Repeat("a", bufio.MaxScanTokenSize+1)),
+				max: bufio.MaxScanTokenSize + 2,
+			},
+			want: []string{strings.Repeat("a", bufio.MaxScanTokenSize+1)},
+		},
+		{
+			name: "lines greater than MaxScanTokenSize by default are not allowed",
+			args: args{
+				r: strings.NewReader(strings.Repeat("a", bufio.MaxScanTokenSize+1)),
+			},
+			want:   nil,
+			expErr: ErrLineTooLong,
 		},
 	}
 	for _, tt := range tests {
@@ -122,29 +142,26 @@ func TestBatcher_read(t *testing.T) {
 			var cancel context.CancelFunc
 			if tt.args.cancel {
 				ctx, cancel = context.WithCancel(ctx)
+				cancel()
 			}
 
-			b := &Batcher{}
-			got := []string{}
+			b := &Batcher{MaxLineLength: tt.args.max}
+			var got []string
 
-			go b.read(ctx, tt.args.r, tt.args.lines, tt.args.errC)
-			if cancel != nil {
-				cancel()
-			} else {
-				for line := range tt.args.lines {
+			lines := make(chan []byte)
+			errC := make(chan error, 1)
+
+			go b.read(ctx, tt.args.r, lines, errC)
+
+			if cancel == nil {
+				for line := range lines {
 					got = append(got, string(line))
 				}
 			}
 
-			err := <-tt.args.errC
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ScanLines.read() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !cmp.Equal(got, tt.want) {
-				t.Errorf("%q. Batcher.read() = -got/+want %s", tt.name, cmp.Diff(got, tt.want))
-			}
+			err := <-errC
+			assert.Equal(t, err, tt.expErr)
+			assert.Equal(t, got, tt.want)
 		})
 	}
 }
@@ -264,6 +281,14 @@ func TestBatcher_write(t *testing.T) {
 					got = string(b)
 					return err
 				},
+				WriteToF: func(ctx context.Context, filter platform.BucketFilter, r io.Reader) error {
+					if tt.args.writeError {
+						return fmt.Errorf("error")
+					}
+					b, err := ioutil.ReadAll(r)
+					got = string(b)
+					return err
+				},
 			}
 
 			b := &Batcher{
@@ -271,8 +296,11 @@ func TestBatcher_write(t *testing.T) {
 				MaxFlushInterval: tt.fields.MaxFlushInterval,
 				Service:          svc,
 			}
+			writeFn := func(batch []byte) error {
+				return svc.Write(ctx, tt.args.org, tt.args.bucket, bytes.NewReader(batch))
+			}
 
-			go b.write(ctx, tt.args.org, tt.args.bucket, tt.args.lines, tt.args.errC)
+			go b.write(ctx, writeFn, tt.args.lines, tt.args.errC)
 
 			if cancel != nil {
 				cancel()
@@ -301,6 +329,17 @@ func TestBatcher_write(t *testing.T) {
 }
 
 func TestBatcher_Write(t *testing.T) {
+	createReader := func(data string) func() io.Reader {
+		if data == "error" {
+			return func() io.Reader {
+				return &errorReader{}
+			}
+		}
+		return func() io.Reader {
+			return strings.NewReader(data)
+		}
+	}
+
 	type fields struct {
 		MaxFlushBytes    int
 		MaxFlushInterval time.Duration
@@ -309,7 +348,7 @@ func TestBatcher_Write(t *testing.T) {
 		writeError bool
 		org        platform.ID
 		bucket     platform.ID
-		r          io.Reader
+		r          func() io.Reader
 	}
 	tests := []struct {
 		name        string
@@ -327,7 +366,7 @@ func TestBatcher_Write(t *testing.T) {
 			args: args{
 				org:    platform.ID(1),
 				bucket: platform.ID(2),
-				r:      strings.NewReader("m1,t1=v1 f1=1"),
+				r:      createReader("m1,t1=v1 f1=1"),
 			},
 			want:        "m1,t1=v1 f1=1",
 			wantFlushes: 1,
@@ -340,7 +379,7 @@ func TestBatcher_Write(t *testing.T) {
 			args: args{
 				org:    platform.ID(1),
 				bucket: platform.ID(2),
-				r:      strings.NewReader("m1,t1=v1 f1=1\nm2,t2=v2 f2=2\nm3,t3=v3 f3=3"),
+				r:      createReader("m1,t1=v1 f1=1\nm2,t2=v2 f2=2\nm3,t3=v3 f3=3"),
 			},
 			want:        "m3,t3=v3 f3=3",
 			wantFlushes: 3,
@@ -351,7 +390,7 @@ func TestBatcher_Write(t *testing.T) {
 			args: args{
 				org:    platform.ID(1),
 				bucket: platform.ID(2),
-				r:      &errorReader{},
+				r:      createReader("error"),
 			},
 			wantErr: true,
 		},
@@ -383,7 +422,46 @@ func TestBatcher_Write(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			if err := b.Write(ctx, tt.args.org, tt.args.bucket, tt.args.r); (err != nil) != tt.wantErr {
+			if err := b.Write(ctx, tt.args.org, tt.args.bucket, tt.args.r()); (err != nil) != tt.wantErr {
+				t.Errorf("Batcher.Write() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if gotFlushes != tt.wantFlushes {
+				t.Errorf("%q. Batcher.Write() flushes %d want %d", tt.name, gotFlushes, tt.wantFlushes)
+			}
+			if !cmp.Equal(got, tt.want) {
+				t.Errorf("%q. Batcher.Write() = -got/+want %s", tt.name, cmp.Diff(got, tt.want))
+			}
+		})
+		// test the same data, but now with WriteTo function
+		t.Run("WriteTo_"+tt.name, func(t *testing.T) {
+			// mocking the write service here to either return an error
+			// or get back all the bytes from the reader.
+			var (
+				got        string
+				gotFlushes int
+			)
+			svc := &mock.WriteService{
+				WriteToF: func(ctx context.Context, filter platform.BucketFilter, r io.Reader) error {
+					if tt.args.writeError {
+						return fmt.Errorf("error")
+					}
+					b, err := ioutil.ReadAll(r)
+					got = string(b)
+					gotFlushes++
+					return err
+				},
+			}
+
+			b := &Batcher{
+				MaxFlushBytes:    tt.fields.MaxFlushBytes,
+				MaxFlushInterval: tt.fields.MaxFlushInterval,
+				Service:          svc,
+			}
+
+			ctx := context.Background()
+			bucketFilter := platform.BucketFilter{ID: &tt.args.bucket, OrganizationID: &tt.args.org}
+			if err := b.WriteTo(ctx, bucketFilter, tt.args.r()); (err != nil) != tt.wantErr {
 				t.Errorf("Batcher.Write() error = %v, wantErr %v", err, tt.wantErr)
 			}
 

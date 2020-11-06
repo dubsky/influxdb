@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/influxdata/influxdb/v2"
@@ -15,6 +16,8 @@ import (
 type mwMetrics struct {
 	// RED metrics
 	rec *metric.REDClient
+	// Installed template count metrics
+	templateCounts *prometheus.CounterVec
 
 	next SVC
 }
@@ -24,28 +27,36 @@ var _ SVC = (*mwMetrics)(nil)
 // MWMetrics is a metrics service middleware for the notification endpoint service.
 func MWMetrics(reg *prom.Registry) SVCMiddleware {
 	return func(svc SVC) SVC {
-		return &mwMetrics{
-			rec:  metric.New(reg, "pkger", metric.WithVec(templateVec())),
+		m := &mwMetrics{
+			rec: metric.New(reg, "pkger", metric.WithVec(templateVec()), metric.WithVec(exportVec())),
+			templateCounts: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Namespace: "templates",
+				Subsystem: "installed",
+				Name:      "count",
+				Help:      "Total number of templates installed by name.",
+			}, []string{"template"}),
 			next: svc,
 		}
+		reg.MustRegister(m.templateCounts)
+		return m
 	}
 }
 
-func (s *mwMetrics) InitStack(ctx context.Context, userID influxdb.ID, newStack Stack) (Stack, error) {
+func (s *mwMetrics) InitStack(ctx context.Context, userID influxdb.ID, newStack StackCreate) (Stack, error) {
 	rec := s.rec.Record("init_stack")
 	stack, err := s.next.InitStack(ctx, userID, newStack)
+	return stack, rec(err)
+}
+
+func (s *mwMetrics) UninstallStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) (Stack, error) {
+	rec := s.rec.Record("uninstall_stack")
+	stack, err := s.next.UninstallStack(ctx, identifiers)
 	return stack, rec(err)
 }
 
 func (s *mwMetrics) DeleteStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) error {
 	rec := s.rec.Record("delete_stack")
 	return rec(s.next.DeleteStack(ctx, identifiers))
-}
-
-func (s *mwMetrics) ExportStack(ctx context.Context, orgID, stackID influxdb.ID) (*Pkg, error) {
-	rec := s.rec.Record("export_stack")
-	pkg, err := s.next.ExportStack(ctx, orgID, stackID)
-	return pkg, rec(err)
 }
 
 func (s *mwMetrics) ListStacks(ctx context.Context, orgID influxdb.ID, f ListFilter) ([]Stack, error) {
@@ -66,21 +77,37 @@ func (s *mwMetrics) UpdateStack(ctx context.Context, upd StackUpdate) (Stack, er
 	return stack, rec(err)
 }
 
-func (s *mwMetrics) CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (*Pkg, error) {
-	rec := s.rec.Record("create_pkg")
-	pkg, err := s.next.CreatePkg(ctx, setters...)
-	return pkg, rec(err)
+func (s *mwMetrics) Export(ctx context.Context, opts ...ExportOptFn) (*Template, error) {
+	rec := s.rec.Record("export")
+	opt, err := exportOptFromOptFns(opts)
+	if err != nil {
+		return nil, rec(err)
+	}
+
+	template, err := s.next.Export(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return template, rec(err, metric.RecordAdditional(map[string]interface{}{
+		"num_org_ids": len(opt.OrgIDs),
+		"summary":     template.Summary(),
+		"by_stack":    opt.StackID != 0,
+	}))
 }
 
-func (s *mwMetrics) DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error) {
+func (s *mwMetrics) DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (ImpactSummary, error) {
 	rec := s.rec.Record("dry_run")
 	impact, err := s.next.DryRun(ctx, orgID, userID, opts...)
 	return impact, rec(err, applyMetricAdditions(orgID, userID, impact.Sources))
 }
 
-func (s *mwMetrics) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error) {
+func (s *mwMetrics) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (ImpactSummary, error) {
 	rec := s.rec.Record("apply")
 	impact, err := s.next.Apply(ctx, orgID, userID, opts...)
+	if err == nil {
+		s.templateCounts.WithLabelValues(impact.communityName()).Inc()
+	}
 	return impact, rec(err, applyMetricAdditions(orgID, userID, impact.Sources))
 }
 
@@ -90,6 +117,70 @@ func applyMetricAdditions(orgID, userID influxdb.ID, sources []string) func(*met
 		"sources": sources,
 		"user_id": userID.String(),
 	})
+}
+
+func exportVec() metric.VecOpts {
+	const (
+		byStack         = "by_stack"
+		numOrgIDs       = "num_org_ids"
+		bkts            = "buckets"
+		checks          = "checks"
+		dashes          = "dashboards"
+		endpoints       = "endpoints"
+		labels          = "labels"
+		labelMappings   = "label_mappings"
+		rules           = "rules"
+		tasks           = "tasks"
+		telegrafConfigs = "telegraf_configs"
+		variables       = "variables"
+	)
+	return metric.VecOpts{
+		Name: "template_export",
+		Help: "Metrics for resources being exported",
+		LabelNames: []string{
+			"method",
+			byStack,
+			numOrgIDs,
+			bkts,
+			checks,
+			dashes,
+			endpoints,
+			labels,
+			labelMappings,
+			rules,
+			tasks,
+			telegrafConfigs,
+			variables,
+		},
+		CounterFn: func(vec *prometheus.CounterVec, o metric.CollectFnOpts) {
+			if o.Err != nil {
+				return
+			}
+
+			orgID, _ := o.AdditionalProps[numOrgIDs].(int)
+			sum, _ := o.AdditionalProps["sum"].(Summary)
+			st, _ := o.AdditionalProps[byStack].(bool)
+
+			vec.
+				With(prometheus.Labels{
+					"method":        o.Method,
+					byStack:         strconv.FormatBool(st),
+					numOrgIDs:       strconv.Itoa(orgID),
+					bkts:            strconv.Itoa(len(sum.Buckets)),
+					checks:          strconv.Itoa(len(sum.Checks)),
+					dashes:          strconv.Itoa(len(sum.Dashboards)),
+					endpoints:       strconv.Itoa(len(sum.NotificationEndpoints)),
+					labels:          strconv.Itoa(len(sum.Labels)),
+					labelMappings:   strconv.Itoa(len(sum.LabelMappings)),
+					rules:           strconv.Itoa(len(sum.NotificationRules)),
+					tasks:           strconv.Itoa(len(sum.Tasks)),
+					telegrafConfigs: strconv.Itoa(len(sum.TelegrafConfigs)),
+					variables:       strconv.Itoa(len(sum.TelegrafConfigs)),
+				}).
+				Inc()
+		},
+		HistogramFn: nil,
+	}
 }
 
 func templateVec() metric.VecOpts {

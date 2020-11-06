@@ -36,12 +36,12 @@ func TestWriteConfigs(t *testing.T) {
 				"default": Config{
 					Token:  "token1",
 					Org:    "org1",
-					Host:   "http://localhost:9999",
+					Host:   "http://localhost:8086",
 					Active: true,
 				},
 			},
 			result: `[default]
-  url = "http://localhost:9999"
+  url = "http://localhost:8086"
   token = "token1"
   org = "org1"
   active = true` + commentedStr,
@@ -770,35 +770,39 @@ func TestConfigDelete(t *testing.T) {
 			},
 			stored: Configs{
 				"a2": {
-					Name:  "a2",
-					Host:  "host2",
-					Org:   "org2",
-					Token: "tok2",
+					Active: true,
+					Name:   "a2",
+					Host:   "host2",
+					Org:    "org2",
+					Token:  "tok2",
 				},
 			},
 		},
 	}
 	for _, c := range cases {
-		svc, store := newBufferSVC()
-		_ = store.writeConfigs(c.exists)
-		result, err := svc.DeleteConfig(c.target)
-		influxtesting.ErrorsEqual(t, err, c.err)
-		if err == nil {
-			if diff := cmp.Diff(result, c.result); diff != "" {
-				t.Fatalf("delete config %s failed, diff %s", c.name, diff)
-			}
-			stored, err := store.ListConfigs()
-			if err != nil {
-				t.Fatalf("delete config %s to list result, err %s", c.name, err.Error())
-			}
-			if diff := cmp.Diff(stored, c.stored); diff != "" {
-				t.Fatalf("delete config %s failed, diff %s", c.name, diff)
+		fn := func(t *testing.T) {
+			svc, store := newBufferSVC()
+			_ = store.writeConfigs(c.exists)
+			result, err := svc.DeleteConfig(c.target)
+			influxtesting.ErrorsEqual(t, err, c.err)
+			if err == nil {
+				if diff := cmp.Diff(result, c.result); diff != "" {
+					t.Fatalf("delete config %s failed, diff %s", c.name, diff)
+				}
+				stored, err := store.ListConfigs()
+				if err != nil {
+					t.Fatalf("delete config %s to list result, err %s", c.name, err.Error())
+				}
+				if diff := cmp.Diff(stored, c.stored); diff != "" {
+					t.Fatalf("delete config %s failed, diff %s", c.name, diff)
+				}
 			}
 		}
+		t.Run(c.name, fn)
 	}
 }
 
-func newBufferSVC() (ConfigsService, *bytesStore) {
+func newBufferSVC() (Service, *bytesStore) {
 	store := new(bytesStore)
 	return newConfigsSVC(store), store
 }

@@ -1,9 +1,19 @@
 import React, {Component} from 'react'
-import {withRouter, WithRouterProps} from 'react-router'
-import {connect} from 'react-redux'
+import {
+  withRouter,
+  matchPath,
+  RouteComponentProps,
+  Switch,
+  Route,
+} from 'react-router-dom'
+import {connect, ConnectedProps} from 'react-redux'
+import {notify} from 'src/shared/actions/notifications'
 
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
+import {CommunityTemplateImportOverlay} from 'src/templates/components/CommunityTemplateImportOverlay'
+import {CommunityTemplatesInstalledList} from 'src/templates/components/CommunityTemplatesInstalledList'
+
 import {
   Bullet,
   Button,
@@ -12,77 +22,77 @@ import {
   Heading,
   HeadingElement,
   Input,
-  LinkButton,
-  LinkTarget,
   Page,
   Panel,
+  FlexDirection,
+  IconFont,
 } from '@influxdata/clockface'
 import SettingsTabbedPage from 'src/settings/components/SettingsTabbedPage'
 import SettingsHeader from 'src/settings/components/SettingsHeader'
 
-import {setActiveCommunityTemplate} from 'src/templates/actions/creators'
+import {communityTemplatesImportPath} from 'src/templates/containers/TemplatesIndex'
+
+import GetResources from 'src/resources/components/GetResources'
 import {getOrg} from 'src/organizations/selectors'
+
+import {setStagedTemplateUrl} from 'src/templates/actions/creators'
 
 // Utils
 import {pageTitleSuffixer} from 'src/shared/utils/pageTitles'
 import {
-  getGithubUrlFromTemplateName,
-  getTemplateNameFromGithubUrl,
+  getGithubUrlFromTemplateDetails,
+  getTemplateNameFromUrl,
 } from 'src/templates/utils'
+import {reportError} from 'src/shared/utils/errors'
 
-import {Error as PkgError, PkgSummary, postPackagesApply} from 'src/client'
+import {communityTemplateUnsupportedFormatError} from 'src/shared/copy/notifications'
 
 // Types
-import {AppState, Organization} from 'src/types'
+import {AppState, ResourceType} from 'src/types'
+
+import {event} from 'src/cloud/utils/reporting'
 
 const communityTemplatesUrl =
   'https://github.com/influxdata/community-templates#templates'
+const templatesPath = '/orgs/:orgID/settings/templates'
 
-interface StateProps {
-  org: Organization
+type Params = {
+  params: {directory: string; templateName: string; templateExtension: string}
 }
-
-interface OwnProps extends WithRouterProps {
-  params: {templateName: string}
-}
-
-interface DispatchProps {
-  setActiveCommunityTemplate: typeof setActiveCommunityTemplate
-}
-
-type Props = DispatchProps & OwnProps & StateProps
-
-// works specifically for csgo, the greatest community template ever conceived
-// https://github.com/influxdata/community-templates/tree/master/csgo
-const getRawYamlFromGithub = repoUrl => {
-  return repoUrl
-    .replace('github.com', 'raw.githubusercontent.com')
-    .replace('tree/', '')
-}
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = ReduxProps & RouteComponentProps<{templateName: string}>
 
 @ErrorHandling
 class UnconnectedTemplatesIndex extends Component<Props> {
   state = {
-    currentTemplate: '',
+    templateUrl: '',
   }
 
   public componentDidMount() {
-    if (this.props.params.templateName) {
-      const currentTemplate = getGithubUrlFromTemplateName(
-        this.props.params.templateName
-      )
+    // if this component mounts, and the install template is on the screen
+    // (i.e. the user reloaded the page with the install template active)
+    // grab the template name, and fill in the text input
+    const match = matchPath(this.props.location.pathname, {
+      path: communityTemplatesImportPath,
+    }) as Params
 
-      this.setState({currentTemplate}, () => {
-        this.applyPackages(
-          this.props.org.id,
-          getTemplateNameFromGithubUrl(currentTemplate)
-        )
+    if (
+      match?.params?.directory &&
+      match?.params?.templateName &&
+      match?.params?.templateExtension
+    ) {
+      this.setState({
+        templateUrl: getGithubUrlFromTemplateDetails(
+          match.params.directory,
+          match.params.templateName,
+          match.params.templateExtension
+        ),
       })
     }
   }
 
   public render() {
-    const {org, children} = this.props
+    const {org} = this.props
     return (
       <>
         <Page titleTag={pageTitleSuffixer(['Templates', 'Settings'])}>
@@ -90,7 +100,7 @@ class UnconnectedTemplatesIndex extends Component<Props> {
           <SettingsTabbedPage activeTab="templates" orgID={org.id}>
             {/* todo: maybe make this not a div */}
             <div className="community-templates-upload">
-              <Panel className="community-templates-upload-panel">
+              <Panel className="community-templates-panel">
                 <Panel.SymbolHeader
                   symbol={<Bullet text={1} size={ComponentSize.Medium} />}
                   title={
@@ -100,12 +110,13 @@ class UnconnectedTemplatesIndex extends Component<Props> {
                   }
                   size={ComponentSize.Small}
                 >
-                  <LinkButton
+                  <Button
                     color={ComponentColor.Primary}
-                    href={communityTemplatesUrl}
-                    size={ComponentSize.Small}
-                    target={LinkTarget.Blank}
+                    size={ComponentSize.Large}
+                    onClick={this.onClickBrowseCommunityTemplates}
                     text="Browse Community Templates"
+                    testID="browse-template-button"
+                    icon={IconFont.GitHub}
                   />
                 </Panel.SymbolHeader>
               </Panel>
@@ -117,91 +128,105 @@ class UnconnectedTemplatesIndex extends Component<Props> {
                       Paste the Template's Github URL below
                     </Heading>
                   }
-                  size={ComponentSize.Medium}
+                  size={ComponentSize.Small}
                 />
-                <Panel.Body size={ComponentSize.Large}>
-                  <div>
-                    <Input
-                      className="community-templates-template-url"
-                      onChange={this.handleTemplateChange}
-                      placeholder="Enter the URL of an InfluxDB Template..."
-                      style={{width: '80%'}}
-                      value={this.state.currentTemplate}
-                    />
-                    <Button
-                      onClick={this.startTemplateInstall}
-                      size={ComponentSize.Small}
-                      text="Lookup Template"
-                    />
-                  </div>
+                <Panel.Body
+                  size={ComponentSize.Large}
+                  direction={FlexDirection.Row}
+                >
+                  <Input
+                    className="community-templates-template-url"
+                    onChange={this.handleTemplateChange}
+                    placeholder="Enter the URL of an InfluxDB Template..."
+                    style={{flex: '1 0 0'}}
+                    value={this.state.templateUrl}
+                    testID="lookup-template-input"
+                    size={ComponentSize.Large}
+                  />
+                  <Button
+                    onClick={this.startTemplateInstall}
+                    size={ComponentSize.Large}
+                    text="Lookup Template"
+                    testID="lookup-template-button"
+                  />
                 </Panel.Body>
               </Panel>
+              <GetResources
+                resources={[
+                  ResourceType.Buckets,
+                  ResourceType.Checks,
+                  ResourceType.Dashboards,
+                  ResourceType.Labels,
+                  ResourceType.NotificationEndpoints,
+                  ResourceType.NotificationRules,
+                  ResourceType.Tasks,
+                  ResourceType.Telegrafs,
+                  ResourceType.Variables,
+                ]}
+              >
+                <CommunityTemplatesInstalledList orgID={org.id} />
+              </GetResources>
             </div>
           </SettingsTabbedPage>
         </Page>
-        {children}
+        <Switch>
+          <Route
+            path={`${templatesPath}/import`}
+            component={CommunityTemplateImportOverlay}
+          />
+        </Switch>
       </>
     )
   }
 
-  private applyPackages = async (orgID, templateName) => {
-    const yamlLocation =
-      getRawYamlFromGithub(this.state.currentTemplate) + `/${templateName}.yml`
-
-    const params = {
-      data: {
-        dryRun: true,
-        orgID,
-        remotes: [{url: yamlLocation}],
-      },
-    }
-    try {
-      const resp = await postPackagesApply(params)
-      if (resp.status >= 300) {
-        throw new Error((resp.data as PkgError).message)
-      }
-
-      const summary = (resp.data as PkgSummary).summary
-      this.props.setActiveCommunityTemplate(summary)
-      return summary
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
   private startTemplateInstall = () => {
-    if (!this.state.currentTemplate) {
-      console.error('undefined')
+    if (!this.state.templateUrl) {
+      this.props.notify(communityTemplateUnsupportedFormatError())
       return false
     }
 
-    const name = getTemplateNameFromGithubUrl(this.state.currentTemplate)
-    this.showInstallerOverlay(name)
-    this.applyPackages(this.props.org.id, name)
+    try {
+      this.props.setStagedTemplateUrl(this.state.templateUrl)
+
+      event('template_click_lookup', {
+        templateName: getTemplateNameFromUrl(this.state.templateUrl).name,
+      })
+
+      this.props.history.push(
+        `/orgs/${this.props.org.id}/settings/templates/import`
+      )
+    } catch (err) {
+      this.props.notify(communityTemplateUnsupportedFormatError())
+      reportError(err, {
+        name: 'The community template getTemplateDetails failed',
+      })
+    }
   }
 
-  private showInstallerOverlay = templateName => {
-    const {router, org} = this.props
-
-    router.push(`/orgs/${org.id}/settings/templates/import/${templateName}`)
+  private handleTemplateChange = evt => {
+    this.setState({templateUrl: evt.target.value})
   }
 
-  private handleTemplateChange = event => {
-    this.setState({currentTemplate: event.target.value})
+  private onClickBrowseCommunityTemplates = () => {
+    event('template_click_browse')
+
+    window.open(communityTemplatesUrl)
   }
 }
 
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   return {
     org: getOrg(state),
   }
 }
 
 const mdtp = {
-  setActiveCommunityTemplate,
+  notify,
+  setStagedTemplateUrl,
 }
 
-export const CommunityTemplatesIndex = connect<StateProps, {}, {}>(
-  mstp,
-  mdtp
-)(withRouter<{}>(UnconnectedTemplatesIndex))
+const connector = connect(mstp, mdtp)
+
+export const CommunityTemplatesIndex = connector(
+  withRouter(UnconnectedTemplatesIndex)
+)

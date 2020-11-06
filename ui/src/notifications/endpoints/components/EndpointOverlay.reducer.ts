@@ -41,9 +41,7 @@ export const reducer = (
             return {
               ...baseProps,
               type: 'pagerduty',
-              clientURL: `${location.origin}/orgs/${
-                baseProps.orgID
-              }/alert-history`,
+              clientURL: `${location.origin}/orgs/${baseProps.orgID}/alert-history`,
               routingKey: '',
             }
           case 'http':
@@ -60,6 +58,13 @@ export const reducer = (
               type: 'slack',
               url: DEFAULT_ENDPOINT_URLS.slack,
               token: '',
+            }
+          case 'telegram':
+            return {
+              ...baseProps,
+              type: 'telegram',
+              token: '',
+              channel: '',
             }
         }
       }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -20,6 +19,7 @@ type BucketHandler struct {
 	api       *kithttp.API
 	log       *zap.Logger
 	bucketSvc influxdb.BucketService
+	labelSvc  influxdb.LabelService // we may need this for now but we dont want it perminantly
 }
 
 const (
@@ -27,11 +27,12 @@ const (
 )
 
 // NewHTTPBucketHandler constructs a new http server.
-func NewHTTPBucketHandler(log *zap.Logger, bucketSvc influxdb.BucketService, urmHandler, labelHandler http.Handler) *BucketHandler {
+func NewHTTPBucketHandler(log *zap.Logger, bucketSvc influxdb.BucketService, labelSvc influxdb.LabelService, urmHandler, labelHandler http.Handler) *BucketHandler {
 	svr := &BucketHandler{
 		api:       kithttp.NewAPI(kithttp.WithLog(log)),
 		log:       log,
 		bucketSvc: bucketSvc,
+		labelSvc:  labelSvc,
 	}
 
 	r := chi.NewRouter()
@@ -211,10 +212,11 @@ func newBucketUpdate(pb *influxdb.BucketUpdate) *bucketUpdate {
 
 type bucketResponse struct {
 	bucket
-	Links map[string]string `json:"links"`
+	Links  map[string]string `json:"links"`
+	Labels []influxdb.Label  `json:"labels"`
 }
 
-func NewBucketResponse(b *influxdb.Bucket) *bucketResponse {
+func NewBucketResponse(b *influxdb.Bucket, labels ...*influxdb.Label) *bucketResponse {
 	res := &bucketResponse{
 		Links: map[string]string{
 			"self":    fmt.Sprintf("/api/v2/buckets/%s", b.ID),
@@ -225,6 +227,10 @@ func NewBucketResponse(b *influxdb.Bucket) *bucketResponse {
 			"write":   fmt.Sprintf("/api/v2/write?org=%s&bucket=%s", b.OrgID, b.ID),
 		},
 		bucket: *newBucket(b),
+		Labels: []influxdb.Label{},
+	}
+	for _, l := range labels {
+		res.Labels = append(res.Labels, *l)
 	}
 
 	return res
@@ -235,10 +241,14 @@ type bucketsResponse struct {
 	Buckets []*bucketResponse     `json:"buckets"`
 }
 
-func newBucketsResponse(ctx context.Context, opts influxdb.FindOptions, f influxdb.BucketFilter, bs []*influxdb.Bucket) *bucketsResponse {
+func newBucketsResponse(ctx context.Context, opts influxdb.FindOptions, f influxdb.BucketFilter, bs []*influxdb.Bucket, labelSvc influxdb.LabelService) *bucketsResponse {
 	rs := make([]*bucketResponse, 0, len(bs))
 	for _, b := range bs {
-		rs = append(rs, NewBucketResponse(b))
+		var labels []*influxdb.Label
+		if labelSvc != nil { // allow for no label svc
+			labels, _ = labelSvc.FindResourceLabels(ctx, influxdb.LabelMappingFilter{ResourceID: b.ID, ResourceType: influxdb.BucketsResourceType})
+		}
+		rs = append(rs, NewBucketResponse(b, labels...))
 	}
 	return &bucketsResponse{
 		Links:   influxdb.NewPagingLinks(prefixBuckets, opts, f, len(bs)),
@@ -259,11 +269,6 @@ func (h *BucketHandler) handlePostBucket(w http.ResponseWriter, r *http.Request)
 	}
 
 	bucket := b.toInfluxDB()
-
-	if err := validBucketName(bucket); err != nil {
-		h.api.Err(w, r, err)
-		return
-	}
 
 	if err := h.bucketSvc.CreateBucket(r.Context(), bucket); err != nil {
 		h.api.Err(w, r, err)
@@ -297,14 +302,6 @@ func (b *postBucketRequest) OK() error {
 				Code: influxdb.EUnprocessableEntity,
 				Msg:  err.Error(),
 			}
-		}
-	}
-
-	// names starting with an underscore are reserved for system buckets
-	if err := validBucketName(b.toInfluxDB()); err != nil {
-		return &influxdb.Error{
-			Code: influxdb.EUnprocessableEntity,
-			Msg:  err.Error(),
 		}
 	}
 
@@ -345,8 +342,12 @@ func (h *BucketHandler) handleGetBucket(w http.ResponseWriter, r *http.Request) 
 	}
 
 	h.log.Debug("Bucket retrieved", zap.String("bucket", fmt.Sprint(b)))
+	var labels []*influxdb.Label
+	if h.labelSvc != nil { // allow for no label svc
+		labels, _ = h.labelSvc.FindResourceLabels(ctx, influxdb.LabelMappingFilter{ResourceID: b.ID, ResourceType: influxdb.BucketsResourceType})
+	}
 
-	h.api.Respond(w, r, http.StatusOK, NewBucketResponse(b))
+	h.api.Respond(w, r, http.StatusOK, NewBucketResponse(b, labels...))
 }
 
 // handleDeleteBucket is the HTTP handler for the DELETE /api/v2/buckets/:id route.
@@ -382,7 +383,7 @@ func (h *BucketHandler) handleGetBuckets(w http.ResponseWriter, r *http.Request)
 	}
 	h.log.Debug("Buckets retrieved", zap.String("buckets", fmt.Sprint(bs)))
 
-	h.api.Respond(w, r, http.StatusOK, newBucketsResponse(r.Context(), bucketsRequest.opts, bucketsRequest.filter, bs))
+	h.api.Respond(w, r, http.StatusOK, newBucketsResponse(r.Context(), bucketsRequest.opts, bucketsRequest.filter, bs, h.labelSvc))
 }
 
 type getBucketsRequest struct {
@@ -449,10 +450,6 @@ func (h *BucketHandler) handlePatchBucket(w http.ResponseWriter, r *http.Request
 			return
 		}
 		b.Name = *reqBody.Name
-		if err := validBucketName(b); err != nil {
-			h.api.Err(w, r, err)
-			return
-		}
 	}
 
 	b, err := h.bucketSvc.UpdateBucket(r.Context(), *id, *reqBody.toInfluxDB())
@@ -472,17 +469,4 @@ func (h *BucketHandler) lookupOrgByBucketID(ctx context.Context, id influxdb.ID)
 		return 0, err
 	}
 	return b.OrgID, nil
-}
-
-// validBucketName reports any errors with bucket names
-func validBucketName(bucket *influxdb.Bucket) error {
-	// names starting with an underscore are reserved for system buckets
-	if strings.HasPrefix(bucket.Name, "_") && bucket.Type != influxdb.BucketTypeSystem {
-		return &influxdb.Error{
-			Code: influxdb.EInvalid,
-			Op:   "http/bucket",
-			Msg:  fmt.Sprintf("bucket name %s is invalid. Buckets may not start with underscore", bucket.Name),
-		}
-	}
-	return nil
 }

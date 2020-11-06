@@ -2,15 +2,18 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/influxdata/flux"
+	"github.com/influxdata/flux/ast"
 	"github.com/influxdata/flux/lang"
 	"github.com/influxdata/flux/runtime"
 	"github.com/influxdata/influxdb/v2"
 	icontext "github.com/influxdata/influxdb/v2/context"
+	"github.com/influxdata/influxdb/v2/kit/feature"
 	"github.com/influxdata/influxdb/v2/kit/tracing"
 	"github.com/influxdata/influxdb/v2/query"
 	"github.com/influxdata/influxdb/v2/task/backend"
@@ -21,9 +24,15 @@ import (
 const (
 	maxPromises       = 1000
 	defaultMaxWorkers = 100
+
+	lastSuccessOption = "tasks.lastSuccessTime"
 )
 
 var _ scheduler.Executor = (*Executor)(nil)
+
+type PermissionService interface {
+	FindPermissionForUser(ctx context.Context, UserID influxdb.ID) (influxdb.PermissionSet, error)
+}
 
 type Promise interface {
 	ID() influxdb.ID
@@ -51,6 +60,7 @@ type executorConfig struct {
 	maxWorkers             int
 	systemBuildCompiler    CompilerBuilderFunc
 	nonSystemBuildCompiler CompilerBuilderFunc
+	flagger                feature.Flagger
 }
 
 type executorOption func(*executorConfig)
@@ -64,7 +74,31 @@ func WithMaxWorkers(n int) executorOption {
 
 // CompilerBuilderFunc is a function that yields a new flux.Compiler. The
 // context.Context provided can be assumed to be an authorized context.
-type CompilerBuilderFunc func(ctx context.Context, query string, now time.Time) (flux.Compiler, error)
+type CompilerBuilderFunc func(ctx context.Context, query string, ts CompilerBuilderTimestamps) (flux.Compiler, error)
+
+// CompilerBuilderTimestamps contains timestamps which should be provided along
+// with a Task query.
+type CompilerBuilderTimestamps struct {
+	Now           time.Time
+	LatestSuccess time.Time
+}
+
+func (ts CompilerBuilderTimestamps) Extern() *ast.File {
+	var body []ast.Statement
+
+	if !ts.LatestSuccess.IsZero() {
+		body = append(body, &ast.OptionStatement{
+			Assignment: &ast.VariableAssignment{
+				ID: &ast.Identifier{Name: lastSuccessOption},
+				Init: &ast.DateTimeLiteral{
+					Value: ts.LatestSuccess,
+				},
+			},
+		})
+	}
+
+	return &ast.File{Body: body}
+}
 
 // WithSystemCompilerBuilder is an Executor option that configures a
 // CompilerBuilderFunc to be used when compiling queries for System Tasks.
@@ -83,8 +117,15 @@ func WithNonSystemCompilerBuilder(builder CompilerBuilderFunc) executorOption {
 	}
 }
 
+// WithFlagger is an Executor option that allows us to use a feature flagger in the executor
+func WithFlagger(flagger feature.Flagger) executorOption {
+	return func(o *executorConfig) {
+		o.flagger = flagger
+	}
+}
+
 // NewExecutor creates a new task executor
-func NewExecutor(log *zap.Logger, qs query.QueryService, as influxdb.AuthorizationService, ts influxdb.TaskService, tcs backend.TaskControlService, opts ...executorOption) (*Executor, *ExecutorMetrics) {
+func NewExecutor(log *zap.Logger, qs query.QueryService, us PermissionService, ts influxdb.TaskService, tcs backend.TaskControlService, opts ...executorOption) (*Executor, *ExecutorMetrics) {
 	cfg := &executorConfig{
 		maxWorkers:             defaultMaxWorkers,
 		systemBuildCompiler:    NewASTCompiler,
@@ -99,7 +140,7 @@ func NewExecutor(log *zap.Logger, qs query.QueryService, as influxdb.Authorizati
 		ts:  ts,
 		tcs: tcs,
 		qs:  qs,
-		as:  as,
+		ps:  us,
 
 		currentPromises:        sync.Map{},
 		promiseQueue:           make(chan *promise, maxPromises),
@@ -107,6 +148,7 @@ func NewExecutor(log *zap.Logger, qs query.QueryService, as influxdb.Authorizati
 		limitFunc:              func(*influxdb.Task, *influxdb.Run) error { return nil }, // noop
 		systemBuildCompiler:    cfg.systemBuildCompiler,
 		nonSystemBuildCompiler: cfg.nonSystemBuildCompiler,
+		flagger:                cfg.flagger,
 	}
 
 	e.metrics = NewExecutorMetrics(e)
@@ -126,7 +168,7 @@ type Executor struct {
 	tcs backend.TaskControlService
 
 	qs query.QueryService
-	as influxdb.AuthorizationService
+	ps PermissionService
 
 	metrics *ExecutorMetrics
 
@@ -144,6 +186,7 @@ type Executor struct {
 
 	nonSystemBuildCompiler CompilerBuilderFunc
 	systemBuildCompiler    CompilerBuilderFunc
+	flagger                feature.Flagger
 }
 
 // SetLimitFunc sets the limit func for this task executor
@@ -276,16 +319,24 @@ func (e *Executor) createPromise(ctx context.Context, run *influxdb.Run) (*promi
 	if err != nil {
 		return nil, err
 	}
-	if !t.Authorization.GetUserID().Valid() {
-		t.Authorization.UserID = t.OwnerID
+
+	perm, err := e.ps.FindPermissionForUser(ctx, t.OwnerID)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
 	// create promise
 	p := &promise{
-		run:        run,
-		task:       t,
-		auth:       t.Authorization,
+		run:  run,
+		task: t,
+		auth: &influxdb.Authorization{
+			Status:      influxdb.Active,
+			UserID:      t.OwnerID,
+			ID:          influxdb.ID(1),
+			OrgID:       t.OrganizationID,
+			Permissions: perm,
+		},
 		createdAt:  time.Now().UTC(),
 		done:       make(chan struct{}),
 		ctx:        ctx,
@@ -393,8 +444,6 @@ func (w *worker) start(p *promise) {
 }
 
 func (w *worker) finish(p *promise, rs influxdb.RunStatus, err error) {
-
-	// trace
 	span, ctx := tracing.StartSpanFromContext(p.ctx)
 	defer span.Finish()
 
@@ -442,13 +491,16 @@ func (w *worker) executeQuery(p *promise) {
 	// start
 	w.start(p)
 
-	ctx = icontext.SetAuthorizer(ctx, p.task.Authorization)
+	ctx = icontext.SetAuthorizer(ctx, p.auth)
 
 	buildCompiler := w.systemBuildCompiler
 	if p.task.Type != influxdb.TaskSystemType {
 		buildCompiler = w.nonSystemBuildCompiler
 	}
-	compiler, err := buildCompiler(ctx, p.task.Flux, p.run.ScheduledFor)
+	compiler, err := buildCompiler(ctx, p.task.Flux, CompilerBuilderTimestamps{
+		Now:           p.run.ScheduledFor,
+		LatestSuccess: p.task.LatestSuccess,
+	})
 	if err != nil {
 		w.finish(p, influxdb.RunFail, influxdb.ErrFluxParseError(err))
 		return
@@ -569,21 +621,45 @@ func exhaustResultIterators(res flux.Result) error {
 }
 
 // NewASTCompiler parses a Flux query string into an AST representatation.
-func NewASTCompiler(_ context.Context, query string, now time.Time) (flux.Compiler, error) {
+func NewASTCompiler(ctx context.Context, query string, ts CompilerBuilderTimestamps) (flux.Compiler, error) {
 	pkg, err := runtime.ParseToJSON(query)
 	if err != nil {
 		return nil, err
 	}
+	var externBytes []byte
+	if feature.InjectLatestSuccessTime().Enabled(ctx) {
+		extern := ts.Extern()
+		if len(extern.Body) > 0 {
+			var err error
+			externBytes, err = json.Marshal(extern)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return lang.ASTCompiler{
-		AST: pkg,
-		Now: now,
+		AST:    pkg,
+		Now:    ts.Now,
+		Extern: externBytes,
 	}, nil
 }
 
 // NewFluxCompiler wraps a Flux query string in a raw-query representation.
-func NewFluxCompiler(_ context.Context, query string, _ time.Time) (flux.Compiler, error) {
+func NewFluxCompiler(ctx context.Context, query string, ts CompilerBuilderTimestamps) (flux.Compiler, error) {
+	var externBytes []byte
+	if feature.InjectLatestSuccessTime().Enabled(ctx) {
+		extern := ts.Extern()
+		if len(extern.Body) > 0 {
+			var err error
+			externBytes, err = json.Marshal(extern)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return lang.FluxCompiler{
-		Query: query,
+		Query:  query,
+		Extern: externBytes,
 		// TODO(brett): This mitigates an immediate problem where
 		// Checks/Notifications breaks when sending Now, and system Tasks do not
 		// break when sending Now. We are currently sending C+N through using
@@ -594,7 +670,13 @@ func NewFluxCompiler(_ context.Context, query string, _ time.Time) (flux.Compile
 		// we are able to locate the root cause and use Flux Compiler for all
 		// Task types.
 		//
-		// This should be removed once we diagnose the problem.
+		// It turns out this is due to the exclusive nature of the stop time in
+		// Flux "from" and that we weren't including the left-hand boundary of
+		// the range check for notifications. We're shipping a fix soon in
+		//
+		// https://github.com/influxdata/influxdb/pull/19392
+		//
+		// Once this has merged, we can send Now again.
 		//
 		// Now: now,
 	}, nil

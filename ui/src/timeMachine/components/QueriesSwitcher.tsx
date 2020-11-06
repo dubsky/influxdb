@@ -1,6 +1,6 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
 // Components
 import {
@@ -14,6 +14,7 @@ import {
 import {
   editActiveQueryWithBuilder,
   editActiveQueryAsFlux,
+  resetActiveQuerySwitchToBuilder,
 } from 'src/timeMachine/actions'
 
 // Utils
@@ -24,22 +25,18 @@ import {
 } from 'src/timeMachine/utils/queryBuilder'
 
 // Types
-import {AppState, DashboardQuery} from 'src/types'
+import {AppState} from 'src/types'
 
-interface StateProps {
-  activeQuery: DashboardQuery
-}
-
-interface DispatchProps {
-  onEditWithBuilder: typeof editActiveQueryWithBuilder
-  onEditAsFlux: typeof editActiveQueryAsFlux
-}
-
-type Props = StateProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = ReduxProps
 
 class TimeMachineQueriesSwitcher extends PureComponent<Props> {
   public render() {
-    const {onEditAsFlux, onEditWithBuilder} = this.props
+    const {
+      onEditAsFlux,
+      onEditWithBuilder,
+      onResetAndEditWithBuilder,
+    } = this.props
     const {editMode, text, builderConfig} = this.props.activeQuery
     const scriptMode = editMode !== 'builder'
 
@@ -76,7 +73,7 @@ class TimeMachineQueriesSwitcher extends PureComponent<Props> {
                 have made using Flux. This cannot be recovered."
           confirmationButtonText="Switch to Builder"
           text="Query Builder"
-          onConfirm={onEditWithBuilder}
+          onConfirm={onResetAndEditWithBuilder}
           testID="switch-query-builder-confirm"
         />
       )
@@ -94,10 +91,10 @@ const mstp = (state: AppState) => {
 
 const mdtp = {
   onEditWithBuilder: editActiveQueryWithBuilder,
+  onResetAndEditWithBuilder: resetActiveQuerySwitchToBuilder,
   onEditAsFlux: editActiveQueryAsFlux,
 }
 
-export default connect<StateProps, DispatchProps>(
-  mstp,
-  mdtp
-)(TimeMachineQueriesSwitcher)
+const connector = connect(mstp, mdtp)
+
+export default connector(TimeMachineQueriesSwitcher)

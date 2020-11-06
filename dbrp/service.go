@@ -28,7 +28,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/kv"
@@ -63,21 +62,7 @@ func composeForeignKey(orgID influxdb.ID, db string) []byte {
 	return key
 }
 
-func NewService(ctx context.Context, bucketSvc influxdb.BucketService, st kv.Store) (influxdb.DBRPMappingServiceV2, error) {
-	if err := st.Update(ctx, func(tx kv.Tx) error {
-		_, err := tx.Bucket(bucket)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Bucket(indexBucket)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Bucket(defaultBucket)
-		return err
-	}); err != nil {
-		return nil, err
-	}
+func NewService(ctx context.Context, bucketSvc influxdb.BucketService, st kv.Store) influxdb.DBRPMappingServiceV2 {
 	return &Service{
 		store:     st,
 		IDGen:     snowflake.NewDefaultIDGenerator(),
@@ -89,7 +74,7 @@ func NewService(ctx context.Context, bucketSvc influxdb.BucketService, st kv.Sto
 			}
 			return indexForeignKey(dbrp), nil
 		}), kv.WithIndexReadPathEnabled),
-	}, nil
+	}
 }
 
 // getDefault gets the default mapping ID inside of a transaction.
@@ -174,38 +159,39 @@ func (s *Service) unsetDefault(tx kv.Tx, compKey []byte) error {
 // getFirstBut returns the first element in the db/rp index (not accounting for the `skipID`).
 // If the length of the returned ID is 0, it means no element was found.
 // The skip value is useful, for instance, if one wants to delete an element based on the result of this operation.
-func (s *Service) getFirstBut(tx kv.Tx, compKey []byte, skipID []byte) ([]byte, error) {
-	stop := fmt.Errorf("stop")
-	var next []byte
-	if err := s.byOrgAndDatabase.Walk(context.Background(), tx, compKey, func(k, v []byte) error {
+func (s *Service) getFirstBut(tx kv.Tx, compKey []byte, skipID []byte) (next []byte, err error) {
+	err = s.byOrgAndDatabase.Walk(context.Background(), tx, compKey, func(k, v []byte) (bool, error) {
 		if bytes.Equal(skipID, k) {
-			return nil
+			return true, nil
 		}
+
 		next = k
-		return stop
-	}); err != nil && err != stop {
-		return nil, ErrInternalService(err)
-	}
-	return next, nil
+
+		return false, nil
+	})
+	return
 }
 
 // isDBRPUnique verifies if the triple orgID-database-retention-policy is unique.
 func (s *Service) isDBRPUnique(ctx context.Context, m influxdb.DBRPMappingV2) error {
 	return s.store.View(ctx, func(tx kv.Tx) error {
-		return s.byOrgAndDatabase.Walk(ctx, tx, composeForeignKey(m.OrganizationID, m.Database), func(k, v []byte) error {
+		return s.byOrgAndDatabase.Walk(ctx, tx, composeForeignKey(m.OrganizationID, m.Database), func(k, v []byte) (bool, error) {
 			dbrp := &influxdb.DBRPMappingV2{}
 			if err := json.Unmarshal(v, dbrp); err != nil {
-				return ErrInternalService(err)
+				return false, ErrInternalService(err)
 			}
+
 			if dbrp.ID == m.ID {
 				// Corner case.
 				// This is the very same DBRP, just skip it!
-				return nil
+				return true, nil
 			}
+
 			if dbrp.RetentionPolicy == m.RetentionPolicy {
-				return ErrDBRPAlreadyExists("another DBRP mapping with same orgID, db, and rp exists")
+				return false, ErrDBRPAlreadyExists("another DBRP mapping with same orgID, db, and rp exists")
 			}
-			return nil
+
+			return true, nil
 		})
 	})
 }
@@ -268,22 +254,23 @@ func (s *Service) FindMany(ctx context.Context, filter influxdb.DBRPMappingFilte
 	}
 
 	ms := []*influxdb.DBRPMappingV2{}
-	add := func(tx kv.Tx) func(k, v []byte) error {
-		return func(k, v []byte) error {
+	add := func(tx kv.Tx) func(k, v []byte) (bool, error) {
+		return func(k, v []byte) (bool, error) {
 			m := influxdb.DBRPMappingV2{}
 			if err := json.Unmarshal(v, &m); err != nil {
-				return ErrInternalService(err)
+				return false, ErrInternalService(err)
 			}
 			// Updating the Default field must be done before filtering.
 			defID, err := get(tx, m.OrganizationID, m.Database)
 			if err != nil {
-				return ErrInternalService(err)
+				return false, ErrInternalService(err)
 			}
+
 			m.Default = m.ID == *defID
 			if filterFunc(&m, filter) {
 				ms = append(ms, &m)
 			}
-			return nil
+			return true, nil
 		}
 	}
 
@@ -317,7 +304,8 @@ func (s *Service) FindMany(ctx context.Context, filter influxdb.DBRPMappingFilte
 					if err != nil {
 						return ErrInternalService(err)
 					}
-					return add(tx)(defID, v)
+					_, err = add(tx)(defID, v)
+					return err
 				}
 			}
 			return s.byOrgAndDatabase.Walk(ctx, tx, compKey, add(tx))
@@ -332,7 +320,7 @@ func (s *Service) FindMany(ctx context.Context, filter influxdb.DBRPMappingFilte
 		}
 
 		for k, v := cur.First(); k != nil; k, v = cur.Next() {
-			if err := add(tx)(k, v); err != nil {
+			if _, err := add(tx)(k, v); err != nil {
 				return err
 			}
 		}
@@ -370,17 +358,10 @@ func (s *Service) Create(ctx context.Context, dbrp *influxdb.DBRPMappingV2) erro
 	if err != nil {
 		return ErrInvalidDBRPID
 	}
-	b, err := json.Marshal(dbrp)
-	if err != nil {
-		return ErrInternalService(err)
-	}
 
 	return s.store.Update(ctx, func(tx kv.Tx) error {
 		bucket, err := tx.Bucket(bucket)
 		if err != nil {
-			return ErrInternalService(err)
-		}
-		if err := bucket.Put(encodedID, b); err != nil {
 			return ErrInternalService(err)
 		}
 		compKey := indexForeignKey(*dbrp)
@@ -394,6 +375,15 @@ func (s *Service) Create(ctx context.Context, dbrp *influxdb.DBRPMappingV2) erro
 		if !defSet {
 			dbrp.Default = true
 		}
+
+		b, err := json.Marshal(dbrp)
+		if err != nil {
+			return ErrInternalService(err)
+		}
+		if err := bucket.Put(encodedID, b); err != nil {
+			return ErrInternalService(err)
+		}
+
 		if dbrp.Default {
 			if err := s.setAsDefault(tx, compKey, encodedID); err != nil {
 				return err

@@ -7,7 +7,7 @@ commands:
     steps:
       - run:
           name: Install clang
-          command: sudo apt-get install -y --no-install-recommends clang
+          command: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang musl-tools
       - run:
           name: Install rust compiler
           command: |
@@ -22,13 +22,13 @@ commands:
       - run:
           name: Install linux cross compilers
           command: >
-            sudo apt-get install -y --no-install-recommends
-            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
-            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+              gcc-arm-linux-gnueabihf libc6-dev-armhf-cross \
+              gcc-aarch64-linux-gnu libc6-dev-arm64-cross
       - run:
           name: Install macOS cross compilers
           command: |
-            sudo apt-get install -y --no-install-recommends \
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends \
               cmake patch libxml2-dev libssl-dev zlib1g-dev
             sudo mkdir -p /opt/osxcross
             cd /opt
@@ -42,7 +42,8 @@ commands:
       - run:
           name: Install additional rust targets
           command: |
-            rustup target add aarch64-unknown-linux-gnu \
+            rustup target add x86_64-unknown-linux-musl \
+                              aarch64-unknown-linux-gnu \
                               arm-unknown-linux-gnueabihf \
                               armv7-unknown-linux-gnueabihf \
                               x86_64-apple-darwin
@@ -125,7 +126,7 @@ jobs:
           destination: nightly-junit
   e2e:
     docker:
-      - image: circleci/golang:1.13-node-browsers
+      - image: circleci/golang:1.15-node-browsers
     environment:
       GOCACHE: /tmp/go-cache
       GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
@@ -142,13 +143,14 @@ jobs:
           name: Restoring GOPATH/pkg/mod
           keys:
             - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
+      - run: sudo apt-get update
       - run: sudo apt-get install -y netcat-openbsd
       - run: sudo apt-get install -y bzr
       - install_rust_compiler
       - run: make protoc
       - run: make build
       - run:
-          command: ./bin/linux/influxd --store=memory --e2e-testing=true
+          command: ./bin/linux/influxd --store=memory --e2e-testing=true --feature-flags=communityTemplates=true
           background: true
       - run: make e2e
       - store_test_results:
@@ -174,7 +176,7 @@ jobs:
             node --version && npm --version
             docker --version
             google-chrome --version && which google-chrome && chromedriver --version && which chromedriver
-            timeout 300 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:9999)" != "200" ]]; do sleep 5; done' || false
+            timeout 300 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8086)" != "200" ]]; do sleep 5; done' || false
       - run:
           name: Selenium tests
           command: |
@@ -197,9 +199,20 @@ jobs:
           path: ~/e2e/test-results
       - store_artifacts:
           path: ~/e2e/artifacts
+  grace_nightly:
+    machine: true
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - run: docker login -u=$QUAY_USER -p=$QUAY_PASS quay.io
+      - run: docker run --net host -v /var/run/docker.sock:/var/run/docker.sock -e TEST_RESULTS=~/project quay.io/influxdb/grace:latest
+      - store_artifacts:
+          path: ~/project
+      - store_test_results:
+          path: ~/project
   jstest:
     docker:
-      - image: circleci/golang:1.13-node-browsers
+      - image: circleci/golang:1.15-node-browsers
     working_directory: /go/src/github.com/influxdata/influxdb
     parallelism: 8
     steps:
@@ -235,7 +248,7 @@ jobs:
             - ~/.cache/yarn
   jslint:
     docker:
-      - image: circleci/golang:1.13-node-browsers
+      - image: circleci/golang:1.15-node-browsers
     working_directory: /go/src/github.com/influxdata/influxdb
     parallelism: 8
     steps:
@@ -265,10 +278,11 @@ jobs:
             - ~/.cache/yarn
   gotest:
     docker:
-      - image: circleci/golang:1.13
+      - image: circleci/golang:1.15
+    resource_class: large
     environment:
       GOCACHE: /tmp/go-cache
-      GOFLAGS: "-mod=readonly -p=2" # Go on Circle thinks 32 CPUs are available, but there aren't.
+      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
       TEST_RESULTS: /tmp/test-results
     working_directory: /go/src/github.com/influxdata/influxdb
     parallelism: 8
@@ -287,7 +301,7 @@ jobs:
           name: Restoring GOPATH/pkg/mod
           keys:
             - influxdb-gomod-{{ checksum "go.sum" }} # Matches based on go.sum checksum.
-      - run: sudo apt-get install -y bzr
+      - run: sudo apt-get update && sudo apt-get install -y bzr
       - install_rust_compiler
       - run: mkdir -p $TEST_RESULTS
       - run: make test-go # This uses the test cache so it may succeed or fail quickly.
@@ -319,42 +333,18 @@ jobs:
 
   lint-feature-flags:
     docker:
-      - image: circleci/golang:1.13
+      - image: circleci/golang:1.15
     environment:
       GOCACHE: /tmp/go-cache
       GOFLAGS: "-mod=readonly -p=2" # Go on Circle thinks 32 CPUs are available, but there aren't.
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
-      # Populate GOCACHE.
-      - restore_cache:
-          name: Restoring GOCACHE
-          keys:
-            - influxdb-gocache-{{ .Branch }}-{{ .Revision }} # Matches when retrying a single run.
-            - influxdb-gocache-{{ .Branch }}- # Matches a new commit on an existing branch.
-            - influxdb-gocache- # Matches a new branch.
-      # Populate GOPATH/pkg.
-      - restore_cache:
-          name: Restoring GOPATH/pkg/mod
-          keys:
-            - influxdb-gomod-{{ checksum "go.sum" }} # Matches based on go.sum checksum.
       - run: ./scripts/ci/lint/flags.bash
-      - skip_if_not_master
-      - save_cache:
-          name: Saving GOCACHE
-          key: influxdb-gocache-{{ .Branch }}-{{ .Revision }}
-          paths:
-            - /tmp/go-cache
-          when: always
-      - save_cache:
-          name: Saving GOPATH/pkg/mod
-          key: influxdb-gomod-{{ checksum "go.sum" }}
-          paths:
-            - /go/pkg/mod
-          when: always
+
   golint:
     docker:
-      - image: circleci/golang:1.13
+      - image: circleci/golang:1.15
     environment:
       GOCACHE: /tmp/go-cache
       GOFLAGS: "-mod=readonly -p=2" # Go on Circle thinks 32 CPUs are available, but there aren't.
@@ -362,20 +352,7 @@ jobs:
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
-
-      # Populate GOCACHE.
-      - restore_cache:
-          name: Restoring GOCACHE
-          keys:
-            - influxdb-gocache-{{ .Branch }}-{{ .Revision }} # Matches when retrying a single run.
-            - influxdb-gocache-{{ .Branch }}- # Matches a new commit on an existing branch.
-            - influxdb-gocache- # Matches a new branch.
-      # Populate GOPATH/pkg.
-      - restore_cache:
-          name: Restoring GOPATH/pkg/mod
-          keys:
-            - influxdb-gomod-{{ checksum "go.sum" }} # Matches based on go.sum checksum.
-      - run: sudo apt-get install -y bzr
+      - run: sudo apt-get update && sudo apt-get install -y bzr
       - install_rust_compiler
       - run: mkdir -p $TEST_RESULTS
       - run: |
@@ -394,18 +371,6 @@ jobs:
       - run: GO111MODULE=on go mod vendor # staticcheck looks in vendor for dependencies.
       - run: GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck # Install staticcheck from the version we specify in go.mod.
       - run: GO111MODULE=on ./env staticcheck ./...
-      - save_cache:
-          name: Saving GOCACHE
-          key: influxdb-gocache-{{ .Branch }}-{{ .Revision }}
-          paths:
-            - /tmp/go-cache
-          when: always
-      - save_cache:
-          name: Saving GOPATH/pkg/mod
-          key: influxdb-gomod-{{ checksum "go.sum" }}
-          paths:
-            - /go/pkg/mod
-          when: always
       - store_artifacts:
           path: /tmp/test-results
           destination: raw-test-output
@@ -420,7 +385,7 @@ jobs:
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
-      - run: sudo apt-get install -y bzr
+      - run: sudo apt-get update && sudo apt-get install -y bzr
       - install_rust_compiler
       - run: make checkcommit
 
@@ -445,7 +410,7 @@ jobs:
             - etc/litmus_fail_notify.sh
   deploy-nightly:
     docker:
-      - image: circleci/golang:1.13-node-browsers
+      - image: circleci/golang:1.15-node-browsers
     environment:
       GOCACHE: /tmp/go-cache
       GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
@@ -466,7 +431,7 @@ jobs:
       - run:
           name: "Docker Login"
           command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
-      - run: sudo apt-get install -y bzr
+      - run: sudo apt-get update && sudo apt-get install -y bzr
       - install_rust_compiler
       - install_release_tools
       - run: make protoc # installs protoc
@@ -481,11 +446,11 @@ jobs:
 
   release:
     docker:
-      - image: circleci/golang:1.13-node-browsers
+      - image: circleci/golang:1.15-node-browsers
     environment:
       GOCACHE: /tmp/go-cache
       GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
-      DOCKER_VERSION: 2.0.0-beta
+      DOCKER_VERSION: 2.0.0-rc
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
@@ -503,10 +468,15 @@ jobs:
       - run:
           name: "Docker Login"
           command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
-      - run: sudo apt-get install -y bzr
+      - run: sudo apt-get update && sudo apt-get install -y bzr
       - install_rust_compiler
       - install_release_tools
       - run: make protoc # installs protoc
+      - run:
+          name: import GPG key
+          command: |
+            echo -e "$GPG_PRIVATE_KEY" > private.key
+            gpg --batch --import private.key
       - run:
           name: "Build release"
           command: make release
@@ -517,6 +487,7 @@ workflows:
     jobs:
       - gotest
       - golint
+      - lint-feature-flags
       - jstest
       - jslint
       - build
@@ -554,27 +525,30 @@ workflows:
             branches:
               only:
                 - master
-                - feat/use-algo-w
     jobs:
       - gotest
       - golint
+      - lint-feature-flags
       - jstest
       - jslint
       - deploy-nightly:
           requires:
             - gotest
             - golint
+            - lint-feature-flags
             - jstest
             - jslint
           filters:
             branches:
               only:
                 - master
-                - feat/use-algo-w
       - litmus_nightly:
           requires:
             - deploy-nightly
-      - selenium_accept:
+      # - selenium_accept:
+      #    requires:
+      #      - deploy-nightly
+      - grace_nightly:
           requires:
             - deploy-nightly
   release:
@@ -584,33 +558,40 @@ workflows:
             branches:
               ignore: /.*/
             tags:
-              only: /^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)\.[0-9]+$/
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$/
       - golint:
           filters:
             branches:
               ignore: /.*/
             tags:
-              only: /^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)\.[0-9]+$/
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$/
+      - lint-feature-flags:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$/
       - jstest:
           filters:
             branches:
               ignore: /.*/
             tags:
-              only: /^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)\.[0-9]+$/
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$/
       - jslint:
           filters:
             branches:
               ignore: /.*/
             tags:
-              only: /^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)\.[0-9]+$/
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$/
       - release:
           requires:
             - gotest
             - golint
+            - lint-feature-flags
             - jstest
             - jslint
           filters:
             branches:
               ignore: /.*/
             tags:
-              only: /^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)\.[0-9]+$/
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$/

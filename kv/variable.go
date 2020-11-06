@@ -8,15 +8,12 @@ import (
 	"github.com/influxdata/influxdb/v2"
 )
 
-// TODO: eradicate this with migration strategy
-var variableOrgsIndex = []byte("variableorgsv1")
-
-func (s *Service) initializeVariablesOrgIndex(tx Tx) error {
-	if _, err := tx.Bucket(variableOrgsIndex); err != nil {
-		return err
-	}
-	return nil
-}
+var (
+	variableBucket      = []byte("variablesv1")
+	variableIndexBucket = []byte("variablesindexv1")
+	// TODO: eradicate this with migration strategy
+	variableOrgsIndex = []byte("variableorgsv1")
+)
 
 func decodeVariableOrgsIndexKey(indexKey []byte) (orgID influxdb.ID, variableID influxdb.ID, err error) {
 	if len(indexKey) != 2*influxdb.IDLength {
@@ -101,8 +98,8 @@ func newVariableStore() *IndexStore {
 
 	return &IndexStore{
 		Resource:   resource,
-		EntStore:   NewStoreBase(resource, []byte("variablesv1"), EncIDKey, EncBodyJSON, decodeVarEntFn, decValToEntFn),
-		IndexStore: NewOrgNameKeyStore(resource, []byte("variablesindexv1"), false),
+		EntStore:   NewStoreBase(resource, variableBucket, EncIDKey, EncBodyJSON, decodeVarEntFn, decValToEntFn),
+		IndexStore: NewOrgNameKeyStore(resource, variableIndexBucket, false),
 	}
 }
 
@@ -210,7 +207,6 @@ func (s *Service) CreateVariable(ctx context.Context, v *influxdb.Variable) erro
 			}
 		}
 
-		v.Name = strings.TrimSpace(v.Name) // TODO: move to service layer
 		v.ID = s.IDGenerator.ID()
 		now := s.Now()
 		v.CreatedAt = now
@@ -219,9 +215,12 @@ func (s *Service) CreateVariable(ctx context.Context, v *influxdb.Variable) erro
 	})
 }
 
-// ReplaceVariable puts a variable in the store
+// ReplaceVariable replaces a variable that exists in the store or creates it if it does not
 func (s *Service) ReplaceVariable(ctx context.Context, v *influxdb.Variable) error {
 	return s.kv.Update(ctx, func(tx Tx) error {
+		if found, _ := s.findVariableByID(ctx, tx, v.ID); found != nil {
+			return s.putVariable(ctx, tx, v, PutUpdate())
+		}
 		return s.putVariable(ctx, tx, v, PutNew())
 	})
 }

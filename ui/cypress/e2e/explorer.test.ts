@@ -1,5 +1,6 @@
 import {Organization} from '../../src/types'
 import {VIS_TYPES} from '../../src/timeMachine/constants'
+import {lines} from '../support/commands'
 import {
   FROM,
   RANGE,
@@ -40,6 +41,37 @@ describe('DataExplorer', () => {
       cy.get<Organization>('@org').then(({id}) => {
         cy.visit(`${orgs}/${id}${explorer}`)
       })
+    })
+  })
+
+  describe('data-explorer state', () => {
+    it('should persist and display last submitted script editor script ', () => {
+      const fluxCode = 'from(bucket: "_monitoring")'
+      cy.getByTestID('switch-to-script-editor').click()
+      cy.get('.flux-editor').within(() => {
+        cy.get('.view-lines').type(fluxCode)
+      })
+      cy.contains('Submit').click()
+      cy.getByTestID('nav-item-tasks').click()
+      cy.getByTestID('nav-item-data-explorer').click()
+      cy.contains(fluxCode)
+    })
+
+    it('can navigate to data explorer from buckets list and override state', () => {
+      const fluxCode = 'from(bucket: "_monitoring")'
+      cy.getByTestID('switch-to-script-editor').click()
+      cy.get('.flux-editor').within(() => {
+        cy.get('.view-lines').type(fluxCode)
+      })
+      cy.contains('Submit').click()
+      cy.get('.cf-tree-nav--toggle').click()
+      // Can't use the testID to select this nav item because Clockface is silly and uses the same testID twice
+      // Issue: https://github.com/influxdata/clockface/issues/539
+      cy.get('.cf-tree-nav--sub-item-label')
+        .contains('Buckets')
+        .click()
+      cy.getByTestID('bucket--card--name _tasks').click()
+      cy.getByTestID('query-builder').should('exist')
     })
   })
 
@@ -215,7 +247,7 @@ describe('DataExplorer', () => {
   })
 
   describe('select time range to query', () => {
-    it('can select different time ranges', () => {
+    it('can set a custom time range and restricts start & stop selections relative to start & stop dates', () => {
       // find initial value
       cy.get('.cf-dropdown--selected')
         .contains('Past 1')
@@ -234,6 +266,33 @@ describe('DataExplorer', () => {
 
       cy.getByTestID('dropdown-item-customtimerange').click()
       cy.getByTestID('timerange-popover--dialog').should('have.length', 1)
+
+      cy.getByTestID('timerange--input')
+        .first()
+        .clear()
+        .type('2019-10-29 08:00:00.000')
+
+      // Set the stop date to Oct 29, 2019
+      cy.getByTestID('timerange--input')
+        .last()
+        .clear()
+        .type('2019-10-29 09:00:00.000')
+
+      // click button and see if time range has been selected
+      cy.getByTestID('daterange--apply-btn').click()
+
+      cy.getByTestID('timerange-dropdown').click()
+      cy.getByTestID('dropdown-item-customtimerange').click()
+
+      // Select the 30th in the Start timerange
+      cy.get('.react-datepicker__day--030')
+        .first()
+        .should('be', 'disabled')
+
+      // Select the 28th in the Stop timerange
+      cy.get('.react-datepicker__day--028')
+        .last()
+        .should('be', 'disabled')
     })
 
     describe('should allow for custom time range selection', () => {
@@ -257,10 +316,7 @@ describe('DataExplorer', () => {
           .type('2019-10-29')
 
         // click button and see if time range has been selected
-        cy.get('.cf-button--label')
-          .contains('Apply Time Range')
-          .should('have.length', 1)
-          .click()
+        cy.getByTestID('daterange--apply-btn').click()
 
         // TODO: complete test once functionality is fleshed out
 
@@ -300,39 +356,13 @@ describe('DataExplorer', () => {
         cy.getByTestID('input-error').should('have.length', 1)
 
         // try submitting invalid date
-        cy.get('.cf-button--label')
-          .contains('Apply Time Range')
-          .should('have.length', 1)
-          .click()
+        cy.getByTestID('daterange--apply-btn').click()
 
         // TODO: complete test once functionality is fleshed out
 
         // cy.get('.cf-dropdown--selected')
         //   .contains('2019-10-01 00:00 - 2019-10-31 00:00')
         //   .should('have.length', 1)
-      })
-
-      it('can set a custom time range', () => {
-        // set the start and stop dates
-        cy.get('input[title="Start"]')
-          .should('have.length', 1)
-          .clear()
-          .type('2019-10-01')
-
-        cy.get('input[title="Stop"]')
-          .should('have.length', 1)
-          .clear()
-          .type('2019-10-31')
-
-        // click button and see if time range has been selected
-        cy.get('.cf-button--label')
-          .contains('Apply Time Range')
-          .should('have.length', 1)
-          .click()
-
-        cy.get('.cf-dropdown--selected')
-          .contains('2019-10-01 00:00 - 2019-10-31 00:00')
-          .should('have.length', 1)
       })
     })
   })
@@ -452,8 +482,7 @@ describe('DataExplorer', () => {
     })
 
     it('imports the appropriate packages to build a query', () => {
-      cy.getByTestID('functions-toolbar-tab').click()
-
+      cy.getByTestID('functions-toolbar-contents--functions').should('exist')
       cy.getByTestID('flux--from--inject').click()
       cy.getByTestID('flux--range--inject').click()
       cy.getByTestID('flux--math.abs--inject').click()
@@ -479,7 +508,7 @@ describe('DataExplorer', () => {
     })
 
     it('can use the function selector to build a query', () => {
-      cy.getByTestID('functions-toolbar-tab').click()
+      cy.getByTestID('functions-toolbar-contents--functions').should('exist')
 
       cy.getByTestID('flux--from--inject').click()
 
@@ -596,16 +625,27 @@ describe('DataExplorer', () => {
       cy.get('.query-tab').should('have.length', 1)
     })
 
-    it('can remove a second query using tab context menu', () => {
+    it('can rename and remove a second query using tab context menu', () => {
       cy.get('.query-tab').trigger('contextmenu')
       cy.getByTestID('right-click--remove-tab').should(
         'have.class',
         'cf-right-click--menu-item__disabled'
       )
 
+      //rename the first tab
+      cy.get('.query-tab')
+        .first()
+        .trigger('contextmenu')
+      cy.getByTestID('right-click--edit-tab').click()
+      cy.getByTestID('edit-query-name').type('NewName{enter}')
+      cy.get('.query-tab')
+        .first()
+        .contains('NewName')
+
       // Fire a click outside of the right click menu to dismiss it because
       // it is obscuring the + button
-      cy.getByTestID('page-header').click()
+
+      cy.getByTestID('data-explorer--header').click()
 
       cy.get('.time-machine-queries--new').click()
       cy.get('.query-tab').should('have.length', 2)
@@ -655,17 +695,23 @@ describe('DataExplorer', () => {
         cy.getByTestID(`selector-list m`).click()
         cy.getByTestID('selector-list v').click()
         cy.getByTestID(`selector-list tv1`).click()
-        cy.getByTestID('selector-list max').click()
+        cy.getByTestID('selector-list last').click({force: true})
 
         cy.getByTestID('time-machine-submit-button').click()
 
         // cycle through all the visualizations of the data
         VIS_TYPES.forEach(({type}) => {
-          cy.getByTestID('view-type--dropdown').click()
-          cy.getByTestID(`view-type--${type}`).click()
-          cy.getByTestID(`vis-graphic--${type}`).should('exist')
-          if (type.includes('single-stat')) {
-            cy.getByTestID('single-stat--text').should('contain', `${numLines}`)
+          if (type !== 'mosaic' && type !== 'band') {
+            //mosaic graph is behind feature flag
+            cy.getByTestID('view-type--dropdown').click()
+            cy.getByTestID(`view-type--${type}`).click()
+            cy.getByTestID(`vis-graphic--${type}`).should('exist')
+            if (type.includes('single-stat')) {
+              cy.getByTestID('single-stat--text').should(
+                'contain',
+                `${numLines}`
+              )
+            }
           }
         })
 
@@ -673,6 +719,7 @@ describe('DataExplorer', () => {
         cy.getByTestID('raw-data--toggle').click()
         cy.getByTestID('raw-data-table').should('exist')
         cy.getByTestID('raw-data--toggle').click()
+        cy.getByTestID('giraffe-axes').should('exist')
       })
 
       it('can set min or max y-axis values', () => {
@@ -703,12 +750,63 @@ describe('DataExplorer', () => {
         cy.getByTestID('form--element-error').should('not.exist')
       })
 
+      it('can set x-axis and y-axis values', () => {
+        // build the query to return data from beforeEach
+        cy.getByTestID(`selector-list m`).click()
+        cy.getByTestID('selector-list v').click()
+        cy.getByTestID(`selector-list tv1`).click()
+
+        cy.getByTestID('time-machine-submit-button').click()
+        cy.getByTestID('cog-cell--button').click()
+
+        // Check stop
+        cy.getByTestID('dropdown-x').click()
+        cy.getByTitle('_stop').click()
+        cy.getByTestID('dropdown-x').contains('_stop')
+
+        //check Value
+        cy.getByTestID('dropdown-x').click()
+        cy.getByTitle('_value').click()
+        cy.getByTestID('dropdown-x').contains('_value')
+
+        //check start
+        cy.getByTestID('dropdown-x').click()
+        cy.getByTitle('_start').click()
+        cy.getByTestID('dropdown-x').contains('_start')
+
+        //check time
+        cy.getByTestID('dropdown-x').click()
+        cy.getByTitle('_time').click()
+        cy.getByTestID('dropdown-x').contains('_time')
+
+        // Check stop
+        cy.getByTestID('dropdown-y').click()
+        cy.getByTitle('_stop').click()
+        cy.getByTestID('dropdown-y').contains('_stop')
+
+        //check Value
+        cy.getByTestID('dropdown-y').click()
+        cy.getByTitle('_value').click()
+        cy.getByTestID('dropdown-y').contains('_value')
+
+        //check start
+        cy.getByTestID('dropdown-y').click()
+        cy.getByTitle('_start').click()
+        cy.getByTestID('dropdown-y').contains('_start')
+
+        //check time
+        cy.getByTestID('dropdown-y').click()
+        cy.getByTitle('_time').click()
+        cy.getByTestID('dropdown-y').contains('_time')
+      })
+
       it('can view table data & sort values numerically', () => {
         // build the query to return data from beforeEach
         cy.getByTestID(`selector-list m`).click()
         cy.getByTestID('selector-list v').click()
         cy.getByTestID(`selector-list tv1`).click()
-        cy.getByTestID('selector-list sort').click()
+        cy.getByTestID(`custom-function`).click()
+        cy.getByTestID('selector-list sort').click({force: true})
 
         cy.getByTestID('time-machine-submit-button').click()
 
@@ -756,7 +854,8 @@ describe('DataExplorer', () => {
         cy.getByTestID(`selector-list m`).click()
         cy.getByTestID('selector-list v').click()
         cy.getByTestID(`selector-list tv1`).click()
-        cy.getByTestID('selector-list sort').click()
+        cy.getByTestID(`custom-function`).click()
+        cy.getByTestID('selector-list sort').click({force: true})
 
         cy.getByTestID('time-machine-submit-button').click()
 
@@ -766,12 +865,12 @@ describe('DataExplorer', () => {
         cy.getByTestID('raw-data--toggle').click()
 
         cy.get('.time-machine--view').within(() => {
-          cy.get('.cf-dapper-scrollbars--thumb-y') // TODO(zoe): replace with test ids https://github.com/influxdata/clockface/issues/507
+          cy.getByTestID('rawdata-table--scrollbar--thumb-y')
             .trigger('mousedown', {force: true})
             .trigger('mousemove', {clientY: 5000})
             .trigger('mouseup')
 
-          cy.get('.cf-dapper-scrollbars--thumb-x') // TODO(zoe): replace with test ids https://github.com/influxdata/clockface/issues/507
+          cy.getByTestID('rawdata-table--scrollbar--thumb-x')
             .trigger('mousedown', {force: true})
             .trigger('mousemove', {clientX: 1000})
             .trigger('mouseup')
@@ -787,7 +886,8 @@ describe('DataExplorer', () => {
         cy.getByTestID(`selector-list m`).click()
         cy.getByTestID('selector-list v').click()
         cy.getByTestID(`selector-list tv1`).click()
-        cy.getByTestID('selector-list sort').click()
+        cy.getByTestID(`custom-function`).click()
+        cy.getByTestID('selector-list sort').click({force: true})
 
         cy.getByTestID('time-machine-submit-button').click()
 
@@ -795,7 +895,7 @@ describe('DataExplorer', () => {
         cy.getByTestID(`view-type--table`).click()
 
         cy.get('.time-machine--view').within(() => {
-          cy.get('.cf-dapper-scrollbars--thumb-y') // TODO(zoe): replace with test ids https://github.com/influxdata/clockface/issues/507
+          cy.getByTestID('dapper-scrollbars--thumb-y')
             .trigger('mousedown', {force: true})
             .trigger('mousemove', {clientY: 5000})
             .trigger('mouseup')
@@ -897,23 +997,3 @@ describe('DataExplorer', () => {
     })
   })
 })
-
-const lines = (numLines = 3) => {
-  // each line is 10 seconds before the previous line
-  const offset_ms = 10_000
-  const now = Date.now()
-  const nanos_per_ms = '000000'
-
-  const decendingValues = Array(numLines)
-    .fill(0)
-    .map((_, i) => i)
-    .reverse()
-
-  const incrementingTimes = decendingValues.map(val => {
-    return now - offset_ms * val
-  })
-
-  return incrementingTimes.map((tm, i) => {
-    return `m,tk1=tv1 v=${i + 1} ${tm}${nanos_per_ms}`
-  })
-}

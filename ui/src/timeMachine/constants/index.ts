@@ -8,6 +8,10 @@ interface VisType {
 
 export const VIS_TYPES: VisType[] = [
   {
+    type: 'band',
+    name: 'Band Plot',
+  },
+  {
     type: 'xy',
     name: 'Graph',
   },
@@ -18,6 +22,10 @@ export const VIS_TYPES: VisType[] = [
   {
     type: 'heatmap',
     name: 'Heatmap',
+  },
+  {
+    type: 'mosaic',
+    name: 'Mosaic',
   },
   {
     type: 'histogram',

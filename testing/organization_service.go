@@ -9,13 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/influxdata/influxdb/v2"
-	platform "github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/mock"
-)
-
-const (
-	orgOneID = "020f755c3c083000"
-	orgTwoID = "020f755c3c083001"
 )
 
 var orgBucketsIDGenerator = mock.NewMockIDGenerator()
@@ -44,10 +38,10 @@ var organizationCmpOptions = cmp.Options{
 
 // OrganizationFields will include the IDGenerator, and organizations
 type OrganizationFields struct {
-	IDGenerator   *mock.MockIDGenerator
+	IDGenerator   influxdb.IDGenerator
+	OrgBucketIDs  influxdb.IDGenerator
 	Organizations []*influxdb.Organization
 	TimeGenerator influxdb.TimeGenerator
-	OrgBucketIDs  *mock.MockIDGenerator
 }
 
 // OrganizationService tests all the service functions.
@@ -86,6 +80,8 @@ func OrganizationService(
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt := tt
+			t.Parallel()
 			tt.fn(init, t)
 		})
 	}
@@ -121,7 +117,7 @@ func CreateOrganization(
 			args: args{
 				organization: &influxdb.Organization{
 					Name:        "name1",
-					ID:          MustIDBase16(orgOneID),
+					ID:          idOne,
 					Description: "desc1",
 				},
 			},
@@ -129,7 +125,7 @@ func CreateOrganization(
 				organizations: []*influxdb.Organization{
 					{
 						Name:        "name1",
-						ID:          platform.ID(mock.FirstMockID),
+						ID:          influxdb.ID(mock.FirstMockID),
 						Description: "desc1",
 						CRUDLog: influxdb.CRUDLog{
 							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
@@ -147,25 +143,25 @@ func CreateOrganization(
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
 			},
 			args: args{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgTwoID),
+					ID:   idTwo,
 					Name: "organization2",
 				},
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 					{
-						ID:   platform.ID(mock.FirstMockID),
+						ID:   influxdb.ID(mock.FirstMockID),
 						Name: "organization2",
 						CRUDLog: influxdb.CRUDLog{
 							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
@@ -183,20 +179,20 @@ func CreateOrganization(
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
 			},
 			args: args{
 				organization: &influxdb.Organization{
-					ID: MustIDBase16(orgOneID),
+					ID: idTwo,
 				},
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
@@ -211,21 +207,21 @@ func CreateOrganization(
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
 			},
 			args: args{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgOneID),
+					ID:   idTwo,
 					Name: "  ",
 				},
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
@@ -240,21 +236,21 @@ func CreateOrganization(
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
 			},
 			args: args{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgOneID),
+					ID:   idTwo,
 					Name: "organization1",
 				},
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
@@ -273,7 +269,7 @@ func CreateOrganization(
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 				},
@@ -286,11 +282,11 @@ func CreateOrganization(
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "organization1",
 					},
 					{
-						ID:   platform.ID(mock.FirstMockID),
+						ID:   influxdb.ID(mock.FirstMockID),
 						Name: "organization2",
 						CRUDLog: influxdb.CRUDLog{
 							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
@@ -345,23 +341,24 @@ func FindOrganizationByID(
 		{
 			name: "basic find organization by id",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id: MustIDBase16(orgTwoID),
+				id: idTwo,
 			},
 			wants: wants{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgTwoID),
+					ID:   idTwo,
 					Name: "organization2",
 				},
 			},
@@ -369,19 +366,20 @@ func FindOrganizationByID(
 		{
 			name: "didn't find organization by id",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id: MustIDBase16(threeID),
+				id: idThree,
 			},
 			wants: wants{
 				organization: nil,
@@ -416,8 +414,9 @@ func FindOrganizations(
 	t *testing.T,
 ) {
 	type args struct {
-		ID   influxdb.ID
-		name string
+		ID          influxdb.ID
+		name        string
+		findOptions influxdb.FindOptions
 	}
 
 	type wants struct {
@@ -433,13 +432,14 @@ func FindOrganizations(
 		{
 			name: "find all organizations",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "abc",
 					},
 					{
-						ID:          MustIDBase16(orgTwoID),
+						// ID(2)
 						Name:        "xyz",
 						Description: "desc xyz",
 					},
@@ -449,11 +449,47 @@ func FindOrganizations(
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 						Name: "abc",
 					},
 					{
-						ID:          MustIDBase16(orgTwoID),
+						ID:          idTwo,
+						Name:        "xyz",
+						Description: "desc xyz",
+					},
+				},
+			},
+		},
+		{
+			name: "find all organizations by offset and limit",
+			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
+				Organizations: []*influxdb.Organization{
+					{
+						// ID(1)
+						Name: "abc",
+					},
+					{
+						// ID(2)
+						Name:        "xyz",
+						Description: "desc xyz",
+					},
+					{
+						// ID(3)
+						Name: "ijk",
+					},
+				},
+			},
+			args: args{
+				findOptions: influxdb.FindOptions{
+					Offset: 1,
+					Limit:  1,
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:          idTwo,
 						Name:        "xyz",
 						Description: "desc xyz",
 					},
@@ -463,24 +499,25 @@ func FindOrganizations(
 		{
 			name: "find organization by id",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "xyz",
 					},
 				},
 			},
 			args: args{
-				ID: MustIDBase16(orgTwoID),
+				ID: idTwo,
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgTwoID),
+						ID:   idTwo,
 						Name: "xyz",
 					},
 				},
@@ -489,13 +526,14 @@ func FindOrganizations(
 		{
 			name: "find organization by name",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "xyz",
 					},
 				},
@@ -506,7 +544,7 @@ func FindOrganizations(
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgTwoID),
+						ID:   idTwo,
 						Name: "xyz",
 					},
 				},
@@ -515,19 +553,20 @@ func FindOrganizations(
 		{
 			name: "find organization by id not exists",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "xyz",
 					},
 				},
 			},
 			args: args{
-				ID: MustIDBase16(threeID),
+				ID: idThree,
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{},
@@ -541,13 +580,14 @@ func FindOrganizations(
 		{
 			name: "find organization by name not exists",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "xyz",
 					},
 				},
@@ -580,7 +620,7 @@ func FindOrganizations(
 				filter.Name = &tt.args.name
 			}
 
-			organizations, _, err := s.FindOrganizations(ctx, filter)
+			organizations, _, err := s.FindOrganizations(ctx, filter, tt.args.findOptions)
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)
 
 			if diff := cmp.Diff(organizations, tt.wants.organizations, organizationCmpOptions...); diff != "" {
@@ -596,7 +636,7 @@ func DeleteOrganization(
 	t *testing.T,
 ) {
 	type args struct {
-		ID string
+		ID influxdb.ID
 	}
 	type wants struct {
 		err           error
@@ -612,25 +652,26 @@ func DeleteOrganization(
 		{
 			name: "delete organizations using exist id",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
+						// ID(1)
 						Name: "orgA",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
+						// ID(2)
 						Name: "orgB",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
 			},
 			args: args{
-				ID: orgOneID,
+				ID: idOne,
 			},
 			wants: wants{
 				organizations: []*influxdb.Organization{
 					{
 						Name: "orgB",
-						ID:   MustIDBase16(orgTwoID),
+						ID:   idTwo,
 					},
 				},
 			},
@@ -638,20 +679,21 @@ func DeleteOrganization(
 		{
 			name: "delete organizations using id that does not exist",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
+						// ID(1)
 						Name: "orgA",
-						ID:   MustIDBase16(orgOneID),
 					},
 					{
+						// ID(2)
 						Name: "orgB",
-						ID:   MustIDBase16(orgTwoID),
 					},
 				},
 			},
 			args: args{
-				ID: "1234567890654321",
+				ID: MustIDBase16("1234567890654321"),
 			},
 			wants: wants{
 				err: &influxdb.Error{
@@ -662,11 +704,11 @@ func DeleteOrganization(
 				organizations: []*influxdb.Organization{
 					{
 						Name: "orgA",
-						ID:   MustIDBase16(orgOneID),
+						ID:   idOne,
 					},
 					{
 						Name: "orgB",
-						ID:   MustIDBase16(orgTwoID),
+						ID:   idTwo,
 					},
 				},
 			},
@@ -678,7 +720,7 @@ func DeleteOrganization(
 			s, opPrefix, done := init(tt.fields, t)
 			defer done()
 			ctx := context.Background()
-			err := s.DeleteOrganization(ctx, MustIDBase16(tt.args.ID))
+			err := s.DeleteOrganization(ctx, tt.args.ID)
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)
 
 			filter := influxdb.OrganizationFilter{}
@@ -716,13 +758,14 @@ func FindOrganization(
 		{
 			name: "find organization by name",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "xyz",
 					},
 				},
@@ -732,7 +775,7 @@ func FindOrganization(
 			},
 			wants: wants{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgOneID),
+					ID:   idOne,
 					Name: "abc",
 				},
 			},
@@ -765,9 +808,10 @@ func FindOrganization(
 		{
 			name: "find organization no filter is set returns an error about filters not provided",
 			fields: OrganizationFields{
+				OrgBucketIDs: mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "o1",
 					},
 				},
@@ -779,6 +823,7 @@ func FindOrganization(
 		{
 			name: "missing organization returns error",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				Organizations: []*influxdb.Organization{},
 			},
 			args: args{
@@ -841,14 +886,15 @@ func UpdateOrganization(
 		{
 			name: "update id not exists",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
@@ -868,25 +914,26 @@ func UpdateOrganization(
 		{
 			name: "update name",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id:   MustIDBase16(orgOneID),
+				id:   idOne,
 				name: strPtr("changed"),
 			},
 			wants: wants{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgOneID),
+					ID:   idOne,
 					Name: "changed",
 					CRUDLog: influxdb.CRUDLog{
 						UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
@@ -897,25 +944,26 @@ func UpdateOrganization(
 		{
 			name: "update name to same name",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id:   MustIDBase16(orgOneID),
+				id:   idOne,
 				name: strPtr("organization1"),
 			},
 			wants: wants{
 				organization: &influxdb.Organization{
-					ID:   MustIDBase16(orgOneID),
+					ID:   idOne,
 					Name: "organization1",
 					CRUDLog: influxdb.CRUDLog{
 						UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
@@ -925,20 +973,21 @@ func UpdateOrganization(
 		}, {
 			name: "update name not unique",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id:   MustIDBase16(orgOneID),
+				id:   idOne,
 				name: strPtr("organization2"),
 			},
 			wants: wants{
@@ -952,20 +1001,21 @@ func UpdateOrganization(
 		{
 			name: "update name is empty",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id:   MustIDBase16(orgOneID),
+				id:   idOne,
 				name: strPtr(""),
 			},
 			wants: wants{
@@ -975,20 +1025,21 @@ func UpdateOrganization(
 		{
 			name: "update name only has space",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:   MustIDBase16(orgOneID),
+						// ID(1)
 						Name: "organization1",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
+						// ID(2)
 						Name: "organization2",
 					},
 				},
 			},
 			args: args{
-				id:   MustIDBase16(orgOneID),
+				id:   idOne,
 				name: strPtr("            "),
 			},
 			wants: wants{
@@ -998,27 +1049,28 @@ func UpdateOrganization(
 		{
 			name: "update description",
 			fields: OrganizationFields{
+				OrgBucketIDs:  mock.NewIncrementingIDGenerator(idOne),
 				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				Organizations: []*influxdb.Organization{
 					{
-						ID:          MustIDBase16(orgOneID),
+						// ID(1)
 						Name:        "organization1",
 						Description: "organization1 description",
 					},
 					{
-						ID:          MustIDBase16(orgTwoID),
+						// ID(2)
 						Name:        "organization2",
 						Description: "organization2 description",
 					},
 				},
 			},
 			args: args{
-				id:          MustIDBase16(orgOneID),
+				id:          idOne,
 				description: strPtr("changed"),
 			},
 			wants: wants{
 				organization: &influxdb.Organization{
-					ID:          MustIDBase16(orgOneID),
+					ID:          idOne,
 					Name:        "organization1",
 					Description: "changed",
 					CRUDLog: influxdb.CRUDLog{

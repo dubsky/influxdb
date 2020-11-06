@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 )
 
 // ErrVariableNotFound is the error msg for a missing variable.
@@ -117,6 +118,11 @@ func (m *Variable) Valid() error {
 		return fmt.Errorf("missing variable name")
 	}
 
+	// variable name must start with a letter to be a valid identifier in Flux
+	if !regexp.MustCompile(`^[a-zA-Z_].*`).MatchString(m.Name) {
+		return fmt.Errorf("variable name must start with a letter")
+	}
+
 	validTypes := map[string]bool{
 		"constant": true,
 		"map":      true,
@@ -125,6 +131,15 @@ func (m *Variable) Valid() error {
 
 	if m.Arguments == nil || !validTypes[m.Arguments.Type] {
 		return fmt.Errorf("invalid arguments type")
+	}
+
+	inValidNames := [11]string{"and", "import", "not", "return", "option", "test", "empty", "in", "or", "package", "builtin"}
+
+	for x := range inValidNames {
+
+		if m.Name == inValidNames[x] {
+			return fmt.Errorf("%q is a protected variable name", inValidNames[x])
+		}
 	}
 
 	return nil
@@ -169,7 +184,7 @@ func (a *VariableArguments) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Decode the polymorphic VariableArguments.Values field into the approriate struct
+	// Decode the polymorphic VariableArguments.Values field into the appropriate struct
 	switch aux.Type {
 	case "constant":
 		values, ok := aux.Values.([]interface{})

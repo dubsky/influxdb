@@ -1,7 +1,7 @@
 // Libraries
 import React, {FunctionComponent} from 'react'
 import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {withRouter, RouteComponentProps} from 'react-router-dom'
 
 // Types
 import {
@@ -24,22 +24,27 @@ import AlertsColumn from 'src/alerting/components/AlertsColumn'
 // Selectors
 import {getAll} from 'src/resources/selectors'
 
+interface OwnProps {
+  tabIndex: number
+}
+
 interface StateProps {
   rules: NotificationRuleDraft[]
   endpoints: NotificationEndpoint[]
 }
 
-type Props = StateProps & WithRouterProps
+type Props = OwnProps & StateProps & RouteComponentProps<{orgID: string}>
 
 const NotificationRulesColumn: FunctionComponent<Props> = ({
   rules,
-  router,
-  params,
+  history,
+  match,
   endpoints,
+  tabIndex,
 }) => {
   const handleOpenOverlay = () => {
-    const newRuleRoute = `/orgs/${params.orgID}/alerting/rules/new`
-    router.push(newRuleRoute)
+    const newRuleRoute = `/orgs/${match.params.orgID}/alerting/rules/new`
+    history.push(newRuleRoute)
   }
 
   const tooltipContents = (
@@ -88,6 +93,7 @@ const NotificationRulesColumn: FunctionComponent<Props> = ({
       title="Notification Rules"
       createButton={createButton}
       questionMarkTooltipContents={tooltipContents}
+      tabIndex={tabIndex}
     >
       {searchTerm => (
         <NotificationRuleCards rules={rules} searchTerm={searchTerm} />

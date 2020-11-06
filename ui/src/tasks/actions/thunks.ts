@@ -1,5 +1,5 @@
 // Libraries
-import {push, goBack} from 'react-router-redux'
+import {push, goBack, RouterAction} from 'connected-react-router'
 import {Dispatch} from 'react'
 import {normalize} from 'normalizr'
 
@@ -52,6 +52,9 @@ import {checkTaskLimits} from 'src/cloud/actions/limits'
 import {getOrg} from 'src/organizations/selectors'
 import {getStatus} from 'src/resources/selectors'
 
+// Types
+import {TASK_LIMIT} from 'src/resources/constants'
+
 type Action = TaskAction | ExternalActions | ReturnType<typeof getTasks>
 type ExternalActions = NotifyAction | ReturnType<typeof checkTaskLimits>
 
@@ -68,7 +71,7 @@ export const getTasks = () => async (
 
     const org = getOrg(state)
 
-    const resp = await api.getTasks({query: {orgID: org.id}})
+    const resp = await api.getTasks({query: {orgID: org.id, limit: TASK_LIMIT}})
 
     if (resp.status !== 200) {
       throw new Error(resp.data.message)
@@ -224,7 +227,7 @@ export const cloneTask = (task: Task) => async (dispatch: Dispatch<Action>) => {
     }
 
     const normTask = normalize<Task, TaskEntities, string>(
-      resp.data,
+      newTask.data,
       taskSchema
     )
 
@@ -283,7 +286,7 @@ export const setAllTaskOptionsByID = (taskID: string) => async (
 }
 
 export const goToTasks = () => (
-  dispatch: Dispatch<Action>,
+  dispatch: Dispatch<Action | RouterAction>,
   getState: GetState
 ) => {
   const org = getOrg(getState())
@@ -291,7 +294,7 @@ export const goToTasks = () => (
   dispatch(push(`/orgs/${org.id}/tasks`))
 }
 
-export const cancel = () => (dispatch: Dispatch<Action>) => {
+export const cancel = () => (dispatch: Dispatch<Action | RouterAction>) => {
   dispatch(clearCurrentTask())
   dispatch(goBack())
 }

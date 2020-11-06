@@ -33,8 +33,8 @@ func BackendExample() BoolFlag {
 var communityTemplates = MakeBoolFlag(
 	"Community Templates",
 	"communityTemplates",
-	"Bucky, Johnny Steenbergen (Berg)",
-	false,
+	"Bucky",
+	true,
 	Permanent,
 	true,
 )
@@ -58,172 +58,18 @@ func FrontendExample() IntFlag {
 	return frontendExample
 }
 
-var pushDownWindowAggregateCount = MakeBoolFlag(
-	"Push Down Window Aggregate Count",
-	"pushDownWindowAggregateCount",
+var groupWindowAggregateTranspose = MakeBoolFlag(
+	"Group Window Aggregate Transpose",
+	"groupWindowAggregateTranspose",
 	"Query Team",
 	false,
 	Temporary,
 	false,
 )
 
-// PushDownWindowAggregateCount - Enable Count variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateCount() BoolFlag {
-	return pushDownWindowAggregateCount
-}
-
-var pushDownWindowAggregateSum = MakeBoolFlag(
-	"Push Down Window Aggregate Sum",
-	"pushDownWindowAggregateSum",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateSum - Enable Sum variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateSum() BoolFlag {
-	return pushDownWindowAggregateSum
-}
-
-var pushDownWindowAggregateMin = MakeBoolFlag(
-	"Push Down Window Aggregate Min",
-	"pushDownWindowAggregateMin",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateMin - Enable Min variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateMin() BoolFlag {
-	return pushDownWindowAggregateMin
-}
-
-var pushDownWindowAggregateMax = MakeBoolFlag(
-	"Push Down Window Aggregate Max",
-	"pushDownWindowAggregateMax",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateMax - Enable Max variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateMax() BoolFlag {
-	return pushDownWindowAggregateMax
-}
-
-var pushDownWindowAggregateMean = MakeBoolFlag(
-	"Push Down Window Aggregate Mean",
-	"pushDownWindowAggregateMean",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateMean - Enable Mean variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateMean() BoolFlag {
-	return pushDownWindowAggregateMean
-}
-
-var pushDownWindowAggregateFirst = MakeBoolFlag(
-	"Push Down Window Aggregate First",
-	"pushDownWindowAggregateFirst",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateFirst - Enable First variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateFirst() BoolFlag {
-	return pushDownWindowAggregateFirst
-}
-
-var pushDownWindowAggregateLast = MakeBoolFlag(
-	"Push Down Window Aggregate Last",
-	"pushDownWindowAggregateLast",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownWindowAggregateLast - Enable Last variant of PushDownWindowAggregateRule and PushDownBareAggregateRule
-func PushDownWindowAggregateLast() BoolFlag {
-	return pushDownWindowAggregateLast
-}
-
-var newAuth = MakeBoolFlag(
-	"New Auth Package",
-	"newAuth",
-	"Alirie Gray",
-	false,
-	Temporary,
-	false,
-)
-
-// NewAuthPackage - Enables the refactored authorization api
-func NewAuthPackage() BoolFlag {
-	return newAuth
-}
-
-var pushDownGroupAggregateCount = MakeBoolFlag(
-	"Push Down Group Aggregate Count",
-	"pushDownGroupAggregateCount",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateCount - Enable the count variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateCount() BoolFlag {
-	return pushDownGroupAggregateCount
-}
-
-var pushDownGroupAggregateSum = MakeBoolFlag(
-	"Push Down Group Aggregate Sum",
-	"pushDownGroupAggregateSum",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateSum - Enable the sum variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateSum() BoolFlag {
-	return pushDownGroupAggregateSum
-}
-
-var pushDownGroupAggregateFirst = MakeBoolFlag(
-	"Push Down Group Aggregate First",
-	"pushDownGroupAggregateFirst",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateFirst - Enable the first variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateFirst() BoolFlag {
-	return pushDownGroupAggregateFirst
-}
-
-var pushDownGroupAggregateLast = MakeBoolFlag(
-	"Push Down Group Aggregate Last",
-	"pushDownGroupAggregateLast",
-	"Query Team",
-	false,
-	Temporary,
-	false,
-)
-
-// PushDownGroupAggregateLast - Enable the last variant of PushDownGroupAggregate planner rule
-func PushDownGroupAggregateLast() BoolFlag {
-	return pushDownGroupAggregateLast
+// GroupWindowAggregateTranspose - Enables the GroupWindowAggregateTransposeRule for all enabled window aggregates
+func GroupWindowAggregateTranspose() BoolFlag {
+	return groupWindowAggregateTranspose
 }
 
 var newLabels = MakeBoolFlag(
@@ -240,20 +86,6 @@ func NewLabelPackage() BoolFlag {
 	return newLabels
 }
 
-var hydratevars = MakeBoolFlag(
-	"New Hydrate Vars Functionality",
-	"hydratevars",
-	"Ariel Salem / Monitoring Team",
-	false,
-	Temporary,
-	true,
-)
-
-// NewHydrateVarsFunctionality - Enables a minimalistic variable hydration
-func NewHydrateVarsFunctionality() BoolFlag {
-	return hydratevars
-}
-
 var memoryOptimizedFill = MakeBoolFlag(
 	"Memory Optimized Fill",
 	"memoryOptimizedFill",
@@ -268,18 +100,116 @@ func MemoryOptimizedFill() BoolFlag {
 	return memoryOptimizedFill
 }
 
-var urmFreeTasks = MakeBoolFlag(
-	"Urm Free Tasks",
-	"urmFreeTasks",
-	"Lyon Hill",
+var memoryOptimizedSchemaMutation = MakeBoolFlag(
+	"Memory Optimized Schema Mutation",
+	"memoryOptimizedSchemaMutation",
+	"Query Team",
 	false,
 	Temporary,
 	false,
 )
 
-// UrmFreeTasks - allow task system to operate without creating additional urms
-func UrmFreeTasks() BoolFlag {
-	return urmFreeTasks
+// MemoryOptimizedSchemaMutation - Enable the memory optimized schema mutation functions
+func MemoryOptimizedSchemaMutation() BoolFlag {
+	return memoryOptimizedSchemaMutation
+}
+
+var queryTracing = MakeBoolFlag(
+	"Query Tracing",
+	"queryTracing",
+	"Query Team",
+	false,
+	Permanent,
+	false,
+)
+
+// QueryTracing - Turn on query tracing for queries that are sampled
+func QueryTracing() BoolFlag {
+	return queryTracing
+}
+
+var simpleTaskOptionsExtraction = MakeBoolFlag(
+	"Simple Task Options Extraction",
+	"simpleTaskOptionsExtraction",
+	"Brett Buddin",
+	false,
+	Temporary,
+	false,
+)
+
+// SimpleTaskOptionsExtraction - Simplified task options extraction to avoid undefined functions when saving tasks
+func SimpleTaskOptionsExtraction() BoolFlag {
+	return simpleTaskOptionsExtraction
+}
+
+var bandPlotType = MakeBoolFlag(
+	"Band Plot Type",
+	"bandPlotType",
+	"Monitoring Team",
+	false,
+	Temporary,
+	true,
+)
+
+// BandPlotType - Enables the creation of a band plot in Dashboards
+func BandPlotType() BoolFlag {
+	return bandPlotType
+}
+
+var mosaicGraphType = MakeBoolFlag(
+	"Mosaic Graph Type",
+	"mosaicGraphType",
+	"Monitoring Team",
+	false,
+	Temporary,
+	true,
+)
+
+// MosaicGraphType - Enables the creation of a mosaic graph in Dashboards
+func MosaicGraphType() BoolFlag {
+	return mosaicGraphType
+}
+
+var notebooks = MakeBoolFlag(
+	"Notebooks",
+	"notebooks",
+	"Monitoring Team",
+	false,
+	Temporary,
+	true,
+)
+
+// Notebooks - Determine if the notebook feature's route and navbar icon are visible to the user
+func Notebooks() BoolFlag {
+	return notebooks
+}
+
+var injectLatestSuccessTime = MakeBoolFlag(
+	"Inject Latest Success Time",
+	"injectLatestSuccessTime",
+	"Compute Team",
+	false,
+	Temporary,
+	false,
+)
+
+// InjectLatestSuccessTime - Inject the latest successful task run timestamp into a Task query extern when executing.
+func InjectLatestSuccessTime() BoolFlag {
+	return injectLatestSuccessTime
+}
+
+var enforceOrgDashboardLimits = MakeBoolFlag(
+	"Enforce Organization Dashboard Limits",
+	"enforceOrgDashboardLimits",
+	"Compute Team",
+	false,
+	Temporary,
+	false,
+)
+
+// EnforceOrganizationDashboardLimits - Enforces the default limit params for the dashboards api when orgs are set
+func EnforceOrganizationDashboardLimits() BoolFlag {
+	return enforceOrgDashboardLimits
 }
 
 var all = []Flag{
@@ -287,43 +217,33 @@ var all = []Flag{
 	backendExample,
 	communityTemplates,
 	frontendExample,
-	pushDownWindowAggregateCount,
-	pushDownWindowAggregateSum,
-	pushDownWindowAggregateMin,
-	pushDownWindowAggregateMax,
-	pushDownWindowAggregateMean,
-	pushDownWindowAggregateFirst,
-	pushDownWindowAggregateLast,
-	newAuth,
-	pushDownGroupAggregateCount,
-	pushDownGroupAggregateSum,
-	pushDownGroupAggregateFirst,
-	pushDownGroupAggregateLast,
+	groupWindowAggregateTranspose,
 	newLabels,
-	hydratevars,
 	memoryOptimizedFill,
-	urmFreeTasks,
+	memoryOptimizedSchemaMutation,
+	queryTracing,
+	simpleTaskOptionsExtraction,
+	bandPlotType,
+	mosaicGraphType,
+	notebooks,
+	injectLatestSuccessTime,
+	enforceOrgDashboardLimits,
 }
 
 var byKey = map[string]Flag{
-	"appMetrics":                   appMetrics,
-	"backendExample":               backendExample,
-	"communityTemplates":           communityTemplates,
-	"frontendExample":              frontendExample,
-	"pushDownWindowAggregateCount": pushDownWindowAggregateCount,
-	"pushDownWindowAggregateSum":   pushDownWindowAggregateSum,
-	"pushDownWindowAggregateMin":   pushDownWindowAggregateMin,
-	"pushDownWindowAggregateMax":   pushDownWindowAggregateMax,
-	"pushDownWindowAggregateMean":  pushDownWindowAggregateMean,
-	"pushDownWindowAggregateFirst": pushDownWindowAggregateFirst,
-	"pushDownWindowAggregateLast":  pushDownWindowAggregateLast,
-	"newAuth":                      newAuth,
-	"pushDownGroupAggregateCount":  pushDownGroupAggregateCount,
-	"pushDownGroupAggregateSum":    pushDownGroupAggregateSum,
-	"pushDownGroupAggregateFirst":  pushDownGroupAggregateFirst,
-	"pushDownGroupAggregateLast":   pushDownGroupAggregateLast,
-	"newLabels":                    newLabels,
-	"hydratevars":                  hydratevars,
-	"memoryOptimizedFill":          memoryOptimizedFill,
-	"urmFreeTasks":                 urmFreeTasks,
+	"appMetrics":                    appMetrics,
+	"backendExample":                backendExample,
+	"communityTemplates":            communityTemplates,
+	"frontendExample":               frontendExample,
+	"groupWindowAggregateTranspose": groupWindowAggregateTranspose,
+	"newLabels":                     newLabels,
+	"memoryOptimizedFill":           memoryOptimizedFill,
+	"memoryOptimizedSchemaMutation": memoryOptimizedSchemaMutation,
+	"queryTracing":                  queryTracing,
+	"simpleTaskOptionsExtraction":   simpleTaskOptionsExtraction,
+	"bandPlotType":                  bandPlotType,
+	"mosaicGraphType":               mosaicGraphType,
+	"notebooks":                     notebooks,
+	"injectLatestSuccessTime":       injectLatestSuccessTime,
+	"enforceOrgDashboardLimits":     enforceOrgDashboardLimits,
 }

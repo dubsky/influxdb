@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
-	bolt "github.com/coreos/bbolt"
 	"github.com/prometheus/client_golang/prometheus"
+	bolt "go.etcd.io/bbolt"
 )
 
 var _ prometheus.Collector = (*Client)(nil)
@@ -163,17 +163,12 @@ func (c *Client) Collect(ch chan<- prometheus.Metric) {
 
 			for _, v := range rawPlugins {
 				pStats := map[string]float64{}
-				err := json.Unmarshal(v, &pStats)
-				if err != nil {
+				if err := json.Unmarshal(v, &pStats); err != nil {
 					return err
 				}
 
 				for k, v := range pStats {
-					if _, ok := telegrafPlugins[k]; ok {
-						telegrafPlugins[k] += v
-					} else {
-						telegrafPlugins[k] = v
-					}
+					telegrafPlugins[k] += v
 				}
 			}
 

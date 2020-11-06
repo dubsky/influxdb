@@ -51,6 +51,7 @@ var FluxEndToEndSkipList = map[string]map[string]string{
 		"integral_columns":    "unbounded test",
 		"map":                 "unbounded test",
 		"join_missing_on_col": "unbounded test",
+		"join_use_previous":   "unbounded test (https://github.com/influxdata/flux/issues/2996)",
 		"rowfn_with_import":   "unbounded test",
 
 		// the following tests have a difference between the CSV-decoded input table, and the storage-retrieved version of that table
@@ -97,6 +98,10 @@ var FluxEndToEndSkipList = map[string]map[string]string{
 		"join":      "unbounded test",
 		"alignTime": "unbounded test",
 	},
+	"experimental/array": {
+		"from":       "test not meant to be consumed by influxdb",
+		"from_group": "test not meant to be consumed by influxdb",
+	},
 	"experimental/geo": {
 		"filterRowsNotStrict": "tableFind does not work in e2e tests: https://github.com/influxdata/influxdb/issues/13975",
 		"filterRowsStrict":    "tableFind does not work in e2e tests: https://github.com/influxdata/influxdb/issues/13975",
@@ -113,10 +118,8 @@ var FluxEndToEndSkipList = map[string]map[string]string{
 	"http": {
 		"http_endpoint": "need ability to test side effects in e2e tests: (https://github.com/influxdata/flux/issues/1723)",
 	},
-	"influxdata/influxdb/v1": {
-		"show_measurements": "flaky test (https://github.com/influxdata/influxdb/issues/15450)",
-		"show_tag_values":   "flaky test (https://github.com/influxdata/influxdb/issues/15450)",
-		"show_tag_keys":     "flaky test (https://github.com/influxdata/influxdb/issues/15450)",
+	"influxdata/influxdb/schema": {
+		"show_tag_keys": "failing due to bug in test, unskip this after upgrading from Flux v0.91.0",
 	},
 	"influxdata/influxdb/monitor": {
 		"state_changes_big_any_to_any":     "unbounded test",
@@ -145,32 +148,23 @@ var FluxEndToEndSkipList = map[string]map[string]string{
 		"partition_strings_splitN":       "pandas. map does not correctly handled returned arrays (https://github.com/influxdata/flux/issues/1387)",
 	},
 	"testing/promql": {
-		"emptyTable": "tests a source",
-		"year":       "flakey test: https://github.com/influxdata/influxdb/issues/15667",
+		"emptyTable":                    "tests a source",
+		"year":                          "flakey test: https://github.com/influxdata/influxdb/issues/15667",
+		"extrapolatedRate_counter_rate": "option \"testing.loadStorage\" reassigned: https://github.com/influxdata/flux/issues/3155",
+		"extrapolatedRate_nocounter":    "option \"testing.loadStorage\" reassigned: https://github.com/influxdata/flux/issues/3155",
+		"extrapolatedRate_norate":       "option \"testing.loadStorage\" reassigned: https://github.com/influxdata/flux/issues/3155",
+		"linearRegression_nopredict":    "option \"testing.loadStorage\" reassigned: https://github.com/influxdata/flux/issues/3155",
+		"linearRegression_predict":      "option \"testing.loadStorage\" reassigned: https://github.com/influxdata/flux/issues/3155",
+	},
+	"testing/influxql": {
+		"cumulative_sum": "invalid test data requires loadStorage to be overridden. See https://github.com/influxdata/flux/issues/3145",
+		"elapsed":        "failing since split with Flux upgrade: https://github.com/influxdata/influxdb/issues/19568",
+	},
+	"contrib/RohanSreerama5/naiveBayesClassifier": {
+		"bayes": "error calling tableFind: ",
 	},
 }
 
 type PerTestFeatureFlagMap = map[string]map[string]map[string]string
 
-var FluxEndToEndFeatureFlags = PerTestFeatureFlagMap{
-	"planner": {
-		"window_count_push": {
-			"pushDownWindowAggregateCount": "true",
-		},
-		"window_sum_push": {
-			"pushDownWindowAggregateSum": "true",
-		},
-		"bare_count_push": {
-			"pushDownWindowAggregateCount": "true",
-		},
-		"bare_sum_push": {
-			"pushDownWindowAggregateSum": "true",
-		},
-		"group_count_push": {
-			"pushDownGroupAggregateCount": "true",
-		},
-		"group_sum_push": {
-			"pushDownGroupAggregateSum": "true",
-		},
-	},
-}
+var FluxEndToEndFeatureFlags = PerTestFeatureFlagMap{}

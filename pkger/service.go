@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	ierrors "github.com/influxdata/influxdb/v2/kit/errors"
 	icheck "github.com/influxdata/influxdb/v2/notification/check"
 	"github.com/influxdata/influxdb/v2/notification/rule"
+	"github.com/influxdata/influxdb/v2/pkger/internal/wordplay"
 	"github.com/influxdata/influxdb/v2/snowflake"
 	"github.com/influxdata/influxdb/v2/task/options"
 	"go.uber.org/zap"
@@ -23,63 +25,118 @@ import (
 
 // APIVersion marks the current APIVersion for influx packages.
 const APIVersion = "influxdata.com/v2alpha1"
+const APIVersion2 = "influxdata.com/v2alpha2"
+
+// Stack is an identifier for stateful application of a package(s). This stack
+// will map created resources from the template(s) to existing resources on the
+// platform. This stack is updated only after side effects of applying a template.
+// If the template is applied, and no changes are had, then the stack is not updated.
+type Stack struct {
+	ID        influxdb.ID
+	OrgID     influxdb.ID
+	CreatedAt time.Time `json:"createdAt"`
+	Events    []StackEvent
+}
+
+func (s Stack) LatestEvent() StackEvent {
+	if len(s.Events) == 0 {
+		return StackEvent{}
+	}
+	sort.Slice(s.Events, func(i, j int) bool {
+		return s.Events[i].UpdatedAt.Before(s.Events[j].UpdatedAt)
+	})
+	return s.Events[len(s.Events)-1]
+}
 
 type (
-	// Stack is an identifier for stateful application of a package(s). This stack
-	// will map created resources from the pkg(s) to existing resources on the
-	// platform. This stack is updated only after side effects of applying a pkg.
-	// If the pkg is applied, and no changes are had, then the stack is not updated.
-	Stack struct {
-		ID          influxdb.ID     `json:"id"`
-		OrgID       influxdb.ID     `json:"orgID"`
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Sources     []string        `json:"sources"`
-		URLs        []string        `json:"urls"`
-		Resources   []StackResource `json:"resources"`
+	StackEvent struct {
+		EventType    StackEventType
+		Name         string
+		Description  string
+		Sources      []string
+		TemplateURLs []string
+		Resources    []StackResource
+		UpdatedAt    time.Time `json:"updatedAt"`
+	}
 
-		influxdb.CRUDLog
+	StackCreate struct {
+		OrgID        influxdb.ID
+		Name         string
+		Description  string
+		Sources      []string
+		TemplateURLs []string
+		Resources    []StackResource
 	}
 
 	// StackResource is a record for an individual resource side effect genereated from
-	// applying a pkg.
+	// applying a template.
 	StackResource struct {
-		APIVersion   string                     `json:"apiVersion"`
-		ID           influxdb.ID                `json:"resourceID"`
-		Kind         Kind                       `json:"kind"`
-		PkgName      string                     `json:"pkgName"`
-		Associations []StackResourceAssociation `json:"associations"`
+		APIVersion   string
+		ID           influxdb.ID
+		Name         string
+		Kind         Kind
+		MetaName     string
+		Associations []StackResourceAssociation
 	}
 
 	// StackResourceAssociation associates a stack resource with another stack resource.
 	StackResourceAssociation struct {
-		Kind    Kind   `json:"kind"`
-		PkgName string `json:"pkgName"`
+		Kind     Kind
+		MetaName string
 	}
 
 	// StackUpdate provides a means to update an existing stack.
 	StackUpdate struct {
-		ID          influxdb.ID
-		Name        *string
-		Description *string
-		URLs        []string
+		ID                  influxdb.ID
+		Name                *string
+		Description         *string
+		TemplateURLs        []string
+		AdditionalResources []StackAdditionalResource
+	}
+
+	StackAdditionalResource struct {
+		APIVersion string
+		ID         influxdb.ID
+		Kind       Kind
+		MetaName   string
 	}
 )
+
+type StackEventType uint
+
+const (
+	StackEventCreate StackEventType = iota
+	StackEventUpdate
+	StackEventUninstalled
+)
+
+func (e StackEventType) String() string {
+	switch e {
+	case StackEventCreate:
+		return "create"
+	case StackEventUninstalled:
+		return "uninstall"
+	case StackEventUpdate:
+		return "update"
+	default:
+		return "unknown"
+	}
+}
 
 const ResourceTypeStack influxdb.ResourceType = "stack"
 
 // SVC is the packages service interface.
 type SVC interface {
-	InitStack(ctx context.Context, userID influxdb.ID, stack Stack) (Stack, error)
+	InitStack(ctx context.Context, userID influxdb.ID, stack StackCreate) (Stack, error)
+	UninstallStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) (Stack, error)
 	DeleteStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) error
-	ExportStack(ctx context.Context, orgID, stackID influxdb.ID) (*Pkg, error)
 	ListStacks(ctx context.Context, orgID influxdb.ID, filter ListFilter) ([]Stack, error)
 	ReadStack(ctx context.Context, id influxdb.ID) (Stack, error)
 	UpdateStack(ctx context.Context, upd StackUpdate) (Stack, error)
 
-	CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (*Pkg, error)
-	DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error)
-	Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error)
+	Export(ctx context.Context, opts ...ExportOptFn) (*Template, error)
+	DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (ImpactSummary, error)
+	Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (ImpactSummary, error)
 }
 
 // SVCMiddleware is a service middleware func.
@@ -90,6 +147,7 @@ type serviceOpt struct {
 
 	applyReqLimit int
 	idGen         influxdb.IDGenerator
+	nameGen       NameGenerator
 	timeGen       influxdb.TimeGenerator
 	store         Store
 
@@ -158,6 +216,19 @@ func WithDashboardSVC(dashSVC influxdb.DashboardService) ServiceSetterFn {
 	}
 }
 
+// WithLabelSVC sets the label service.
+func WithLabelSVC(labelSVC influxdb.LabelService) ServiceSetterFn {
+	return func(opt *serviceOpt) {
+		opt.labelSVC = labelSVC
+	}
+}
+
+func withNameGen(nameGen NameGenerator) ServiceSetterFn {
+	return func(opt *serviceOpt) {
+		opt.nameGen = nameGen
+	}
+}
+
 // WithNotificationEndpointSVC sets the endpoint notification service.
 func WithNotificationEndpointSVC(endpointSVC influxdb.NotificationEndpointService) ServiceSetterFn {
 	return func(opt *serviceOpt) {
@@ -176,13 +247,6 @@ func WithNotificationRuleSVC(ruleSVC influxdb.NotificationRuleStore) ServiceSett
 func WithOrganizationService(orgSVC influxdb.OrganizationService) ServiceSetterFn {
 	return func(opt *serviceOpt) {
 		opt.orgSVC = orgSVC
-	}
-}
-
-// WithLabelSVC sets the label service.
-func WithLabelSVC(labelSVC influxdb.LabelService) ServiceSetterFn {
-	return func(opt *serviceOpt) {
-		opt.labelSVC = labelSVC
 	}
 }
 
@@ -223,7 +287,7 @@ type Store interface {
 	DeleteStack(ctx context.Context, id influxdb.ID) error
 }
 
-// Service provides the pkger business logic including all the dependencies to make
+// Service provides the template business logic including all the dependencies to make
 // this resource sausage.
 type Service struct {
 	log *zap.Logger
@@ -231,6 +295,7 @@ type Service struct {
 	// internal dependencies
 	applyReqLimit int
 	idGen         influxdb.IDGenerator
+	nameGen       NameGenerator
 	store         Store
 	timeGen       influxdb.TimeGenerator
 
@@ -250,12 +315,13 @@ type Service struct {
 
 var _ SVC = (*Service)(nil)
 
-// NewService is a constructor for a pkger Service.
+// NewService is a constructor for a template Service.
 func NewService(opts ...ServiceSetterFn) *Service {
 	opt := &serviceOpt{
 		logger:        zap.NewNop(),
 		applyReqLimit: 5,
 		idGen:         snowflake.NewDefaultIDGenerator(),
+		nameGen:       wordplay.GetRandomName,
 		timeGen:       influxdb.RealTimeGenerator{},
 	}
 	for _, o := range opts {
@@ -267,6 +333,7 @@ func NewService(opts ...ServiceSetterFn) *Service {
 
 		applyReqLimit: opt.applyReqLimit,
 		idGen:         opt.idGen,
+		nameGen:       opt.nameGen,
 		store:         opt.store,
 		timeGen:       opt.timeGen,
 
@@ -287,53 +354,90 @@ func NewService(opts ...ServiceSetterFn) *Service {
 // InitStack will create a new stack for the given user and its given org. The stack can be created
 // with urls that point to the location of packages that are included as part of the stack when
 // it is applied.
-func (s *Service) InitStack(ctx context.Context, userID influxdb.ID, stack Stack) (Stack, error) {
-	if err := validURLs(stack.URLs); err != nil {
+func (s *Service) InitStack(ctx context.Context, userID influxdb.ID, stCreate StackCreate) (Stack, error) {
+	if err := validURLs(stCreate.TemplateURLs); err != nil {
 		return Stack{}, err
 	}
 
-	if _, err := s.orgSVC.FindOrganizationByID(ctx, stack.OrgID); err != nil {
+	if _, err := s.orgSVC.FindOrganizationByID(ctx, stCreate.OrgID); err != nil {
 		if influxdb.ErrorCode(err) == influxdb.ENotFound {
-			msg := fmt.Sprintf("organization dependency does not exist for id[%q]", stack.OrgID.String())
+			msg := fmt.Sprintf("organization dependency does not exist for id[%q]", stCreate.OrgID.String())
 			return Stack{}, influxErr(influxdb.EConflict, msg)
 		}
 		return Stack{}, internalErr(err)
 	}
 
-	stack.ID = s.idGen.ID()
 	now := s.timeGen.Now()
-	stack.CRUDLog = influxdb.CRUDLog{
+	newStack := Stack{
+		ID:        s.idGen.ID(),
+		OrgID:     stCreate.OrgID,
 		CreatedAt: now,
-		UpdatedAt: now,
+		Events: []StackEvent{
+			{
+				EventType:    StackEventCreate,
+				Name:         stCreate.Name,
+				Description:  stCreate.Description,
+				Resources:    stCreate.Resources,
+				TemplateURLs: stCreate.TemplateURLs,
+				UpdatedAt:    now,
+			},
+		},
 	}
-
-	if err := s.store.CreateStack(ctx, stack); err != nil {
+	if err := s.store.CreateStack(ctx, newStack); err != nil {
 		return Stack{}, internalErr(err)
 	}
 
-	return stack, nil
+	return newStack, nil
+}
+
+// UninstallStack will remove all resources associated with the stack.
+func (s *Service) UninstallStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) (Stack, error) {
+	uninstalledStack, err := s.uninstallStack(ctx, identifiers)
+	if err != nil {
+		return Stack{}, err
+	}
+
+	ev := uninstalledStack.LatestEvent()
+	ev.EventType = StackEventUninstalled
+	ev.Resources = nil
+	ev.UpdatedAt = s.timeGen.Now()
+
+	uninstalledStack.Events = append(uninstalledStack.Events, ev)
+	if err := s.store.UpdateStack(ctx, uninstalledStack); err != nil {
+		s.log.Error("unable to update stack after uninstalling resources", zap.Error(err))
+	}
+	return uninstalledStack, nil
 }
 
 // DeleteStack removes a stack and all the resources that have are associated with the stack.
 func (s *Service) DeleteStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) (e error) {
-	stack, err := s.store.ReadStackByID(ctx, identifiers.StackID)
+	deletedStack, err := s.uninstallStack(ctx, identifiers)
 	if influxdb.ErrorCode(err) == influxdb.ENotFound {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+
+	return s.store.DeleteStack(ctx, deletedStack.ID)
+}
+
+func (s *Service) uninstallStack(ctx context.Context, identifiers struct{ OrgID, UserID, StackID influxdb.ID }) (_ Stack, e error) {
+	stack, err := s.store.ReadStackByID(ctx, identifiers.StackID)
+	if err != nil {
+		return Stack{}, err
+	}
 	if stack.OrgID != identifiers.OrgID {
-		return &influxdb.Error{
+		return Stack{}, &influxdb.Error{
 			Code: influxdb.EConflict,
 			Msg:  "you do not have access to given stack ID",
 		}
 	}
 
-	// providing empty Pkg will remove all applied resources
-	state, err := s.dryRun(ctx, identifiers.OrgID, new(Pkg), applyOptFromOptFns(ApplyWithStackID(identifiers.StackID)))
+	// providing empty template will remove all applied resources
+	state, err := s.dryRun(ctx, identifiers.OrgID, new(Template), applyOptFromOptFns(ApplyWithStackID(identifiers.StackID)))
 	if err != nil {
-		return err
+		return Stack{}, err
 	}
 
 	coordinator := newRollbackCoordinator(s.log, s.applyReqLimit)
@@ -341,188 +445,9 @@ func (s *Service) DeleteStack(ctx context.Context, identifiers struct{ OrgID, Us
 
 	err = s.applyState(ctx, coordinator, identifiers.OrgID, identifiers.UserID, state, nil)
 	if err != nil {
-		return err
+		return Stack{}, err
 	}
-
-	return s.store.DeleteStack(ctx, identifiers.StackID)
-}
-
-func (s *Service) ExportStack(ctx context.Context, orgID, stackID influxdb.ID) (*Pkg, error) {
-	stack, err := s.store.ReadStackByID(ctx, stackID)
-	if err != nil {
-		return nil, err
-	}
-
-	labelObjs, availablePkgLabels, err := s.exportStackLabels(ctx, stack.Resources)
-	if err != nil {
-		return nil, err
-	}
-
-	pkg := Pkg{Objects: labelObjs}
-	for _, res := range stack.Resources {
-		var (
-			obj Object
-			err error
-		)
-
-		switch res.Kind {
-		case KindBucket:
-			bkt, err := s.bucketSVC.FindBucketByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find bucket[%s]", res.ID.String()))
-			}
-			obj = BucketToObject("", *bkt)
-		case KindCheck, KindCheckDeadman, KindCheckThreshold:
-			ch, err := s.checkSVC.FindCheckByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find check[%s]", res.ID.String()))
-			}
-			obj = CheckToObject("", ch)
-		case KindDashboard:
-			dash, err := findDashboardByIDFull(ctx, s.dashSVC, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find dashboard[%s]", res.ID.String()))
-			}
-			obj = DashboardToObject("", *dash)
-		case KindLabel:
-			// these labels have already been discovered. All valid associations with the
-			// labels to be exported will be added, those that are not, will not be added.
-			continue
-		case KindNotificationEndpoint,
-			KindNotificationEndpointHTTP,
-			KindNotificationEndpointPagerDuty,
-			KindNotificationEndpointSlack:
-			e, err := s.endpointSVC.FindNotificationEndpointByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find endpoint[%s]", res.ID.String()))
-			}
-			obj = NotificationEndpointToObject("", e)
-		case KindNotificationRule:
-			e, err := s.ruleSVC.FindNotificationRuleByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find rule[%s]", res.ID.String()))
-			}
-			var endpointName string
-			for _, ass := range res.Associations {
-				if ass.Kind.is(KindNotificationEndpoint) {
-					endpointName = ass.PkgName
-					break
-				}
-			}
-			// rule is invalid if the endpoint is deleted
-			if endpointName == "" {
-				continue
-			}
-			obj = NotificationRuleToObject("", endpointName, e)
-		case KindTask:
-			t, err := s.taskSVC.FindTaskByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find task[%s]", res.ID.String()))
-			}
-			obj = TaskToObject("", *t)
-		case KindTelegraf:
-			t, err := s.teleSVC.FindTelegrafConfigByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find telegraf config[%s]", res.ID.String()))
-			}
-			obj = TelegrafToObject("", *t)
-		case KindVariable:
-			v, err := s.varSVC.FindVariableByID(ctx, res.ID)
-			if influxdb.ErrorCode(err) == influxdb.ENotFound {
-				continue
-			}
-			if err != nil {
-				return nil, ierrors.Wrap(err, fmt.Sprintf("failed to find variable[%s]", res.ID.String()))
-			}
-			obj = VariableToObject("", *v)
-		default:
-			continue
-		}
-
-		labelAssociations, err := s.exportStackResourceLabelAssociations(ctx, res, availablePkgLabels)
-		if err != nil {
-			return nil, err
-		}
-		if len(labelAssociations) > 0 {
-			obj.AddAssociations(labelAssociations...)
-		}
-		obj.SetMetadataName(res.PkgName)
-		pkg.Objects = append(pkg.Objects, obj)
-	}
-
-	pkg.Objects = sortObjects(pkg.Objects)
-	return &pkg, nil
-}
-
-func (s *Service) exportStackLabels(ctx context.Context, resources []StackResource) ([]Object, map[string]string, error) {
-	var objects []Object
-	availablePkgLabels := make(map[string]string) // pkgName => label name
-	for _, res := range resources {
-		if !res.Kind.is(KindLabel) {
-			continue
-		}
-		label, err := s.labelSVC.FindLabelByID(ctx, res.ID)
-		if influxdb.ErrorCode(err) == influxdb.ENotFound {
-			continue
-		}
-		if err != nil {
-			return nil, nil, ierrors.Wrap(err, fmt.Sprintf("failed to find label[%s]", res.ID.String()))
-		}
-		obj := LabelToObject("", *label)
-		obj.SetMetadataName(res.PkgName)
-		objects = append(objects, obj)
-		availablePkgLabels[res.PkgName] = label.Name
-	}
-	return objects, availablePkgLabels, nil
-}
-
-func (s *Service) exportStackResourceLabelAssociations(ctx context.Context, res StackResource, availablePkgLabels map[string]string) ([]ObjectAssociation, error) {
-	labels, err := s.labelSVC.FindResourceLabels(ctx, influxdb.LabelMappingFilter{
-		ResourceID:   res.ID,
-		ResourceType: res.Kind.ResourceType(),
-	})
-	if err != nil {
-		wrapper := fmt.Sprintf("failed to find label mappings for %s[%s]", res.Kind, res.ID)
-		return nil, ierrors.Wrap(err, wrapper)
-	}
-
-	existingLabels := make(map[string]bool)
-	for _, l := range labels {
-		existingLabels[l.Name] = true
-	}
-
-	var associations []ObjectAssociation
-	for _, ass := range res.Associations {
-		// only labels that exist in the PKG AND PLATFORM will be exported as associations.
-		if ass.Kind.is(KindLabel) && existingLabels[availablePkgLabels[ass.PkgName]] {
-			associations = append(associations, ObjectAssociation{
-				Kind:    KindLabel,
-				PkgName: ass.PkgName,
-			})
-		}
-	}
-	return associations, nil
+	return stack, nil
 }
 
 // ListFilter are filter options for filtering stacks from being returned.
@@ -548,46 +473,101 @@ func (s *Service) UpdateStack(ctx context.Context, upd StackUpdate) (Stack, erro
 		return Stack{}, err
 	}
 
-	if upd.Name != nil {
-		existing.Name = *upd.Name
-	}
-	if upd.Description != nil {
-		existing.Description = *upd.Description
-	}
-	if upd.URLs != nil {
-		existing.URLs = upd.URLs
-	}
-	existing.UpdatedAt = s.timeGen.Now()
-
-	if err := s.store.UpdateStack(ctx, existing); err != nil {
+	updatedStack := s.applyStackUpdate(existing, upd)
+	if err := s.store.UpdateStack(ctx, updatedStack); err != nil {
 		return Stack{}, err
 	}
 
-	return existing, nil
+	return updatedStack, nil
+}
+
+func (s *Service) applyStackUpdate(existing Stack, upd StackUpdate) Stack {
+	ev := existing.LatestEvent()
+	ev.EventType = StackEventUpdate
+	ev.UpdatedAt = s.timeGen.Now()
+	if upd.Name != nil {
+		ev.Name = *upd.Name
+	}
+	if upd.Description != nil {
+		ev.Description = *upd.Description
+	}
+	if upd.TemplateURLs != nil {
+		ev.TemplateURLs = upd.TemplateURLs
+	}
+
+	type key struct {
+		k  Kind
+		id influxdb.ID
+	}
+	mExistingResources := make(map[key]bool)
+	mExistingNames := make(map[string]bool)
+	for _, r := range ev.Resources {
+		k := key{k: r.Kind, id: r.ID}
+		mExistingResources[k] = true
+		mExistingNames[r.MetaName] = true
+	}
+
+	var out []StackResource
+	for _, r := range upd.AdditionalResources {
+		k := key{k: r.Kind, id: r.ID}
+		if mExistingResources[k] {
+			continue
+		}
+
+		sr := StackResource{
+			APIVersion: r.APIVersion,
+			ID:         r.ID,
+			Kind:       r.Kind,
+		}
+
+		metaName := r.MetaName
+		if metaName == "" || mExistingNames[metaName] {
+			metaName = uniqMetaName(s.nameGen, s.idGen, mExistingNames)
+		}
+		mExistingNames[metaName] = true
+		sr.MetaName = metaName
+
+		out = append(out, sr)
+	}
+
+	ev.Resources = append(ev.Resources, out...)
+	sort.Slice(ev.Resources, func(i, j int) bool {
+		iName, jName := ev.Resources[i].MetaName, ev.Resources[j].MetaName
+		iKind, jKind := ev.Resources[i].Kind, ev.Resources[j].Kind
+
+		if iKind.is(jKind) {
+			return iName < jName
+		}
+		return kindPriorities[iKind] > kindPriorities[jKind]
+	})
+
+	existing.Events = append(existing.Events, ev)
+	return existing
 }
 
 type (
-	// CreatePkgSetFn is a functional input for setting the pkg fields.
-	CreatePkgSetFn func(opt *CreateOpt) error
+	// ExportOptFn is a functional input for setting the template fields.
+	ExportOptFn func(opt *ExportOpt) error
 
-	// CreateOpt are the options for creating a new package.
-	CreateOpt struct {
-		OrgIDs    []CreateByOrgIDOpt
+	// ExportOpt are the options for creating a new package.
+	ExportOpt struct {
+		StackID   influxdb.ID
+		OrgIDs    []ExportByOrgIDOpt
 		Resources []ResourceToClone
 	}
 
-	// CreateByOrgIDOpt identifies an org to export resources for and provides
+	// ExportByOrgIDOpt identifies an org to export resources for and provides
 	// multiple filtering options.
-	CreateByOrgIDOpt struct {
+	ExportByOrgIDOpt struct {
 		OrgID         influxdb.ID
 		LabelNames    []string
 		ResourceKinds []Kind
 	}
 )
 
-// CreateWithExistingResources allows the create method to clone existing resources.
-func CreateWithExistingResources(resources ...ResourceToClone) CreatePkgSetFn {
-	return func(opt *CreateOpt) error {
+// ExportWithExistingResources allows the create method to clone existing resources.
+func ExportWithExistingResources(resources ...ResourceToClone) ExportOptFn {
+	return func(opt *ExportOpt) error {
 		for _, r := range resources {
 			if err := r.OK(); err != nil {
 				return err
@@ -598,10 +578,10 @@ func CreateWithExistingResources(resources ...ResourceToClone) CreatePkgSetFn {
 	}
 }
 
-// CreateWithAllOrgResources allows the create method to clone all existing resources
+// ExportWithAllOrgResources allows the create method to clone all existing resources
 // for the given organization.
-func CreateWithAllOrgResources(orgIDOpt CreateByOrgIDOpt) CreatePkgSetFn {
-	return func(opt *CreateOpt) error {
+func ExportWithAllOrgResources(orgIDOpt ExportByOrgIDOpt) ExportOptFn {
+	return func(opt *ExportOpt) error {
 		if orgIDOpt.OrgID == 0 {
 			return errors.New("orgID provided must not be zero")
 		}
@@ -615,11 +595,50 @@ func CreateWithAllOrgResources(orgIDOpt CreateByOrgIDOpt) CreatePkgSetFn {
 	}
 }
 
-// CreatePkg will produce a pkg from the parameters provided.
-func (s *Service) CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (*Pkg, error) {
-	opt := new(CreateOpt)
-	for _, setter := range setters {
-		if err := setter(opt); err != nil {
+// ExportWithStackID provides an export for the given stack ID.
+func ExportWithStackID(stackID influxdb.ID) ExportOptFn {
+	return func(opt *ExportOpt) error {
+		opt.StackID = stackID
+		return nil
+	}
+}
+
+func exportOptFromOptFns(opts []ExportOptFn) (ExportOpt, error) {
+	var opt ExportOpt
+	for _, setter := range opts {
+		if err := setter(&opt); err != nil {
+			return ExportOpt{}, err
+		}
+	}
+	return opt, nil
+}
+
+// Export will produce a templates from the parameters provided.
+func (s *Service) Export(ctx context.Context, setters ...ExportOptFn) (*Template, error) {
+	opt, err := exportOptFromOptFns(setters)
+	if err != nil {
+		return nil, err
+	}
+
+	var stack Stack
+	if opt.StackID != 0 {
+		stack, err = s.store.ReadStackByID(ctx, opt.StackID)
+		if err != nil {
+			return nil, err
+		}
+
+		var opts []ExportOptFn
+		for _, r := range stack.LatestEvent().Resources {
+			opts = append(opts, ExportWithExistingResources(ResourceToClone{
+				Kind:     r.Kind,
+				ID:       r.ID,
+				MetaName: r.MetaName,
+				Name:     r.Name,
+			}))
+		}
+
+		opt, err = exportOptFromOptFns(append(setters, opts...))
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -641,12 +660,12 @@ func (s *Service) CreatePkg(ctx context.Context, setters ...CreatePkgSetFn) (*Pk
 		return nil, internalErr(err)
 	}
 
-	pkg := &Pkg{Objects: exporter.Objects()}
-	if err := pkg.Validate(ValidWithoutResources()); err != nil {
+	template := &Template{Objects: exporter.Objects()}
+	if err := template.Validate(ValidWithoutResources()); err != nil {
 		return nil, failedValidationErr(err)
 	}
 
-	return pkg, nil
+	return template, nil
 }
 
 func (s *Service) cloneOrgResources(ctx context.Context, orgID influxdb.ID, resourceKinds []Kind) ([]ResourceToClone, error) {
@@ -678,6 +697,7 @@ func (s *Service) cloneOrgBuckets(ctx context.Context, orgID influxdb.ID) ([]Res
 		resources = append(resources, ResourceToClone{
 			Kind: KindBucket,
 			ID:   b.ID,
+			Name: b.Name,
 		})
 	}
 	return resources, nil
@@ -696,6 +716,7 @@ func (s *Service) cloneOrgChecks(ctx context.Context, orgID influxdb.ID) ([]Reso
 		resources = append(resources, ResourceToClone{
 			Kind: KindCheck,
 			ID:   c.GetID(),
+			Name: c.GetName(),
 		})
 	}
 	return resources, nil
@@ -720,9 +741,11 @@ func (s *Service) cloneOrgDashboards(ctx context.Context, orgID influxdb.ID) ([]
 }
 
 func (s *Service) cloneOrgLabels(ctx context.Context, orgID influxdb.ID) ([]ResourceToClone, error) {
-	labels, err := s.labelSVC.FindLabels(ctx, influxdb.LabelFilter{
+	filter := influxdb.LabelFilter{
 		OrgID: &orgID,
-	}, influxdb.FindOptions{Limit: 10000})
+	}
+
+	labels, err := s.labelSVC.FindLabels(ctx, filter, influxdb.FindOptions{Limit: 100})
 	if err != nil {
 		return nil, ierrors.Wrap(err, "finding labels")
 	}
@@ -732,6 +755,7 @@ func (s *Service) cloneOrgLabels(ctx context.Context, orgID influxdb.ID) ([]Reso
 		resources = append(resources, ResourceToClone{
 			Kind: KindLabel,
 			ID:   l.ID,
+			Name: l.Name,
 		})
 	}
 	return resources, nil
@@ -750,6 +774,7 @@ func (s *Service) cloneOrgNotificationEndpoints(ctx context.Context, orgID influ
 		resources = append(resources, ResourceToClone{
 			Kind: KindNotificationEndpoint,
 			ID:   e.GetID(),
+			Name: e.GetName(),
 		})
 	}
 	return resources, nil
@@ -768,13 +793,14 @@ func (s *Service) cloneOrgNotificationRules(ctx context.Context, orgID influxdb.
 		resources = append(resources, ResourceToClone{
 			Kind: KindNotificationRule,
 			ID:   r.GetID(),
+			Name: r.GetName(),
 		})
 	}
 	return resources, nil
 }
 
 func (s *Service) cloneOrgTasks(ctx context.Context, orgID influxdb.ID) ([]ResourceToClone, error) {
-	tasks, _, err := s.taskSVC.FindTasks(ctx, influxdb.TaskFilter{OrganizationID: &orgID})
+	tasks, err := s.getAllTasks(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -783,16 +809,12 @@ func (s *Service) cloneOrgTasks(ctx context.Context, orgID influxdb.ID) ([]Resou
 		return nil, nil
 	}
 
-	checks, _, err := s.checkSVC.FindChecks(ctx, influxdb.CheckFilter{
-		OrgID: &orgID,
-	})
+	checks, err := s.getAllChecks(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
 
-	rules, _, err := s.ruleSVC.FindNotificationRules(ctx, influxdb.NotificationRuleFilter{
-		OrgID: &orgID,
-	})
+	rules, err := s.getNotificationRules(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -857,12 +879,15 @@ func (s *Service) cloneOrgVariables(ctx context.Context, orgID influxdb.ID) ([]R
 	return resources, nil
 }
 
-type cloneResFn func(context.Context, influxdb.ID) ([]ResourceToClone, error)
+type (
+	cloneResFn func(context.Context, influxdb.ID) ([]ResourceToClone, error)
+	resClone   struct {
+		resType influxdb.ResourceType
+		cloneFn cloneResFn
+	}
+)
 
-func (s *Service) filterOrgResourceKinds(resourceKindFilters []Kind) []struct {
-	resType influxdb.ResourceType
-	cloneFn cloneResFn
-} {
+func (s *Service) filterOrgResourceKinds(resourceKindFilters []Kind) []resClone {
 	mKinds := map[Kind]cloneResFn{
 		KindBucket:               s.cloneOrgBuckets,
 		KindCheck:                s.cloneOrgChecks,
@@ -875,23 +900,14 @@ func (s *Service) filterOrgResourceKinds(resourceKindFilters []Kind) []struct {
 		KindVariable:             s.cloneOrgVariables,
 	}
 
-	newResGen := func(resType influxdb.ResourceType, cloneFn cloneResFn) struct {
-		resType influxdb.ResourceType
-		cloneFn cloneResFn
-	} {
-		return struct {
-			resType influxdb.ResourceType
-			cloneFn cloneResFn
-		}{
+	newResGen := func(resType influxdb.ResourceType, cloneFn cloneResFn) resClone {
+		return resClone{
 			resType: resType,
 			cloneFn: cloneFn,
 		}
 	}
 
-	var resourceTypeGens []struct {
-		resType influxdb.ResourceType
-		cloneFn cloneResFn
-	}
+	var resourceTypeGens []resClone
 	if len(resourceKindFilters) == 0 {
 		for k, cloneFn := range mKinds {
 			resourceTypeGens = append(resourceTypeGens, newResGen(k.ResourceType(), cloneFn))
@@ -912,58 +928,76 @@ func (s *Service) filterOrgResourceKinds(resourceKindFilters []Kind) []struct {
 	return resourceTypeGens
 }
 
-// PkgImpactSummary represents the impact the application of a pkg will have on the system.
-type PkgImpactSummary struct {
+// ImpactSummary represents the impact the application of a template will have on the system.
+type ImpactSummary struct {
 	Sources []string
 	StackID influxdb.ID
 	Diff    Diff
 	Summary Summary
 }
 
-// DryRun provides a dry run of the pkg application. The pkg will be marked verified
+var reCommunityTemplatesValidAddr = regexp.MustCompile(`(?:https://raw.githubusercontent.com/influxdata/community-templates/master/)(?P<name>\w+)(?:/.*)`)
+
+func (i *ImpactSummary) communityName() string {
+	if len(i.Sources) == 0 {
+		return "custom"
+	}
+
+	// pull name `name` from community url https://raw.githubusercontent.com/influxdata/community-templates/master/name/name_template.yml
+	for j := range i.Sources {
+		finds := reCommunityTemplatesValidAddr.FindStringSubmatch(i.Sources[j])
+		if len(finds) == 2 {
+			return finds[1]
+		}
+	}
+
+	return "custom"
+}
+
+// DryRun provides a dry run of the template application. The template will be marked verified
 // for later calls to Apply. This func will be run on an Apply if it has not been run
 // already.
-func (s *Service) DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (PkgImpactSummary, error) {
+func (s *Service) DryRun(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (ImpactSummary, error) {
 	opt := applyOptFromOptFns(opts...)
-	pkg, err := s.pkgFromApplyOpts(ctx, opt)
+	template, err := s.templateFromApplyOpts(ctx, opt)
 	if err != nil {
-		return PkgImpactSummary{}, err
+		return ImpactSummary{}, err
 	}
 
-	state, err := s.dryRun(ctx, orgID, pkg, opt)
+	state, err := s.dryRun(ctx, orgID, template, opt)
 	if err != nil {
-		return PkgImpactSummary{}, err
+		return ImpactSummary{}, err
 	}
 
-	return PkgImpactSummary{
-		Sources: pkg.sources,
+	return ImpactSummary{
+		Sources: template.sources,
 		StackID: opt.StackID,
 		Diff:    state.diff(),
-		Summary: newSummaryFromStatePkg(state, pkg),
+		Summary: newSummaryFromStateTemplate(state, template),
 	}, nil
 }
 
-func (s *Service) dryRun(ctx context.Context, orgID influxdb.ID, pkg *Pkg, opt ApplyOpt) (*stateCoordinator, error) {
+func (s *Service) dryRun(ctx context.Context, orgID influxdb.ID, template *Template, opt ApplyOpt) (*stateCoordinator, error) {
 	// so here's the deal, when we have issues with the parsing validation, we
 	// continue to do the diff anyhow. any resource that does not have a name
 	// will be skipped, and won't bleed into the dry run here. We can now return
 	// a error (parseErr) and valid diff/summary.
 	var parseErr error
-	err := pkg.Validate(ValidWithoutResources())
+	err := template.Validate(ValidWithoutResources())
 	if err != nil && !IsParseErr(err) {
 		return nil, internalErr(err)
 	}
 	parseErr = err
 
 	if len(opt.EnvRefs) > 0 {
-		err := pkg.applyEnvRefs(opt.EnvRefs)
+		err := template.applyEnvRefs(opt.EnvRefs)
 		if err != nil && !IsParseErr(err) {
 			return nil, internalErr(err)
 		}
 		parseErr = err
 	}
 
-	state := newStateCoordinator(pkg, resourceActions{
+	state := newStateCoordinator(template, resourceActions{
 		skipKinds:     opt.KindsToSkip,
 		skipResources: opt.ResourcesToSkip,
 	})
@@ -974,7 +1008,7 @@ func (s *Service) dryRun(ctx context.Context, orgID influxdb.ID, pkg *Pkg, opt A
 		}
 	}
 
-	if err := s.dryRunSecrets(ctx, orgID, pkg); err != nil {
+	if err := s.dryRunSecrets(ctx, orgID, template); err != nil {
 		return nil, err
 	}
 
@@ -1057,13 +1091,13 @@ func (s *Service) dryRunDashboards(ctx context.Context, orgID influxdb.ID, dashs
 }
 
 func (s *Service) dryRunLabels(ctx context.Context, orgID influxdb.ID, labels map[string]*stateLabel) {
-	for _, pkgLabel := range labels {
-		pkgLabel.orgID = orgID
-		existingLabel, _ := s.findLabel(ctx, orgID, pkgLabel)
-		if IsNew(pkgLabel.stateStatus) && existingLabel != nil {
-			pkgLabel.stateStatus = StateStatusExists
+	for _, l := range labels {
+		l.orgID = orgID
+		existingLabel, _ := s.findLabel(ctx, orgID, l)
+		if IsNew(l.stateStatus) && existingLabel != nil {
+			l.stateStatus = StateStatusExists
 		}
-		pkgLabel.existing = existingLabel
+		l.existing = existingLabel
 	}
 }
 
@@ -1119,9 +1153,9 @@ func (s *Service) dryRunNotificationRules(ctx context.Context, orgID influxdb.ID
 			continue
 		}
 
-		e, ok := endpoints[r.parserRule.endpointPkgName()]
+		e, ok := endpoints[r.parserRule.endpointMetaName()]
 		if !IsRemoval(r.stateStatus) && !ok {
-			err := fmt.Errorf("failed to find notification endpoint %q dependency for notification rule %q", r.parserRule.endpointName, r.parserRule.PkgName())
+			err := fmt.Errorf("failed to find notification endpoint %q dependency for notification rule %q", r.parserRule.endpointName, r.parserRule.MetaName())
 			return &influxdb.Error{
 				Code: influxdb.EUnprocessableEntity,
 				Err:  err,
@@ -1133,9 +1167,9 @@ func (s *Service) dryRunNotificationRules(ctx context.Context, orgID influxdb.ID
 	return nil
 }
 
-func (s *Service) dryRunSecrets(ctx context.Context, orgID influxdb.ID, pkg *Pkg) error {
-	pkgSecrets := pkg.mSecrets
-	if len(pkgSecrets) == 0 {
+func (s *Service) dryRunSecrets(ctx context.Context, orgID influxdb.ID, template *Template) error {
+	templateSecrets := template.mSecrets
+	if len(templateSecrets) == 0 {
 		return nil
 	}
 
@@ -1145,7 +1179,7 @@ func (s *Service) dryRunSecrets(ctx context.Context, orgID influxdb.ID, pkg *Pkg
 	}
 
 	for _, secret := range existingSecrets {
-		pkgSecrets[secret] = true // marked true since it exists in the platform
+		templateSecrets[secret] = true // marked true since it exists in the platform
 	}
 
 	return nil
@@ -1303,20 +1337,20 @@ func (s *Service) dryRunLabelMappings(ctx context.Context, state *stateCoordinat
 }
 
 func (s *Service) dryRunResourceLabelMapping(ctx context.Context, state *stateCoordinator, stateLabelsByResName map[string]*stateLabel, associatedResource interface {
-	labels() []*label
+	labels() []*stateLabel
 	stateIdentity() stateIdentity
 }) ([]stateLabelMapping, error) {
 
 	ident := associatedResource.stateIdentity()
-	pkgResourceLabels := associatedResource.labels()
+	templateResourceLabels := associatedResource.labels()
 
 	var mappings []stateLabelMapping
 	if !ident.exists() {
-		for _, l := range pkgResourceLabels {
+		for _, l := range templateResourceLabels {
 			mappings = append(mappings, stateLabelMapping{
 				status:   StateStatusNew,
 				resource: associatedResource,
-				label:    state.getLabelByPkgName(l.PkgName()),
+				label:    l,
 			})
 		}
 		return mappings, nil
@@ -1331,11 +1365,11 @@ func (s *Service) dryRunResourceLabelMapping(ctx context.Context, state *stateCo
 		return nil, ierrors.Wrap(err, msgFmt)
 	}
 
-	pkgLabels := labelSlcToMap(pkgResourceLabels)
+	templateLabels := labelSlcToMap(templateResourceLabels)
 	for _, l := range existingLabels {
 		// if label is found in state then we track the mapping and mark it existing
 		// otherwise we continue on
-		delete(pkgLabels, l.Name)
+		delete(templateLabels, l.Name)
 		if sLabel, ok := stateLabelsByResName[l.Name]; ok {
 			mappings = append(mappings, stateLabelMapping{
 				status:   StateStatusExists,
@@ -1346,11 +1380,15 @@ func (s *Service) dryRunResourceLabelMapping(ctx context.Context, state *stateCo
 	}
 
 	// now we add labels that do not exist
-	for _, l := range pkgLabels {
+	for _, l := range templateLabels {
+		stLabel, found := state.getLabelByMetaName(l.MetaName())
+		if !found {
+			continue
+		}
 		mappings = append(mappings, stateLabelMapping{
 			status:   StateStatusNew,
 			resource: associatedResource,
-			label:    state.getLabelByPkgName(l.PkgName()),
+			label:    stLabel,
 		})
 	}
 
@@ -1370,22 +1408,22 @@ func (s *Service) addStackState(ctx context.Context, stackID influxdb.ID, state 
 type (
 	// ApplyOpt is an option for applying a package.
 	ApplyOpt struct {
-		Pkgs            []*Pkg
-		EnvRefs         map[string]string
+		Templates       []*Template
+		EnvRefs         map[string]interface{}
 		MissingSecrets  map[string]string
 		StackID         influxdb.ID
 		ResourcesToSkip map[ActionSkipResource]bool
 		KindsToSkip     map[Kind]bool
 	}
 
-	// ActionSkipResource provides an action from the consumer to use the pkg with
-	// modifications to the resource kind and pkg name that will be applied.
+	// ActionSkipResource provides an action from the consumer to use the template with
+	// modifications to the resource kind and template name that will be applied.
 	ActionSkipResource struct {
 		Kind     Kind   `json:"kind"`
 		MetaName string `json:"resourceTemplateName"`
 	}
 
-	// ActionSkipKind provides an action from the consumer to use the pkg with
+	// ActionSkipKind provides an action from the consumer to use the template with
 	// modifications to the resource kinds will be applied.
 	ActionSkipKind struct {
 		Kind Kind `json:"kind"`
@@ -1395,17 +1433,17 @@ type (
 	ApplyOptFn func(opt *ApplyOpt)
 )
 
-// ApplyWithEnvRefs provides env refs to saturate the missing reference fields in the pkg.
-func ApplyWithEnvRefs(envRefs map[string]string) ApplyOptFn {
+// ApplyWithEnvRefs provides env refs to saturate the missing reference fields in the template.
+func ApplyWithEnvRefs(envRefs map[string]interface{}) ApplyOptFn {
 	return func(o *ApplyOpt) {
 		o.EnvRefs = envRefs
 	}
 }
 
-// ApplyWithPkg provides a pkg to the application/dry run.
-func ApplyWithPkg(pkg *Pkg) ApplyOptFn {
+// ApplyWithTemplate provides a template to the application/dry run.
+func ApplyWithTemplate(template *Template) ApplyOptFn {
 	return func(opt *ApplyOpt) {
-		opt.Pkgs = append(opt.Pkgs, pkg)
+		opt.Templates = append(opt.Templates, template)
 	}
 }
 
@@ -1445,14 +1483,14 @@ func ApplyWithKindSkip(action ActionSkipKind) ApplyOptFn {
 	}
 }
 
-// ApplyWithSecrets provides secrets to the platform that the pkg will need.
+// ApplyWithSecrets provides secrets to the platform that the template will need.
 func ApplyWithSecrets(secrets map[string]string) ApplyOptFn {
 	return func(o *ApplyOpt) {
 		o.MissingSecrets = secrets
 	}
 }
 
-// ApplyWithStackID associates the application of a pkg with a stack.
+// ApplyWithStackID associates the application of a template with a stack.
 func ApplyWithStackID(stackID influxdb.ID) ApplyOptFn {
 	return func(o *ApplyOpt) {
 		o.StackID = stackID
@@ -1467,36 +1505,36 @@ func applyOptFromOptFns(opts ...ApplyOptFn) ApplyOpt {
 	return opt
 }
 
-// Apply will apply all the resources identified in the provided pkg. The entire pkg will be applied
-// in its entirety. If a failure happens midway then the entire pkg will be rolled back to the state
-// from before the pkg were applied.
-func (s *Service) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (impact PkgImpactSummary, e error) {
+// Apply will apply all the resources identified in the provided template. The entire template will be applied
+// in its entirety. If a failure happens midway then the entire template will be rolled back to the state
+// from before the template were applied.
+func (s *Service) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...ApplyOptFn) (impact ImpactSummary, e error) {
 	opt := applyOptFromOptFns(opts...)
 
-	pkg, err := s.pkgFromApplyOpts(ctx, opt)
+	template, err := s.templateFromApplyOpts(ctx, opt)
 	if err != nil {
-		return PkgImpactSummary{}, err
+		return ImpactSummary{}, err
 	}
 
-	if err := pkg.Validate(ValidWithoutResources()); err != nil {
-		return PkgImpactSummary{}, failedValidationErr(err)
+	if err := template.Validate(ValidWithoutResources()); err != nil {
+		return ImpactSummary{}, failedValidationErr(err)
 	}
 
-	if err := pkg.applyEnvRefs(opt.EnvRefs); err != nil {
-		return PkgImpactSummary{}, failedValidationErr(err)
+	if err := template.applyEnvRefs(opt.EnvRefs); err != nil {
+		return ImpactSummary{}, failedValidationErr(err)
 	}
 
-	state, err := s.dryRun(ctx, orgID, pkg, opt)
+	state, err := s.dryRun(ctx, orgID, template, opt)
 	if err != nil {
-		return PkgImpactSummary{}, err
+		return ImpactSummary{}, err
 	}
 
 	stackID := opt.StackID
 	// if stackID is not provided, a stack will be provided for the application.
 	if stackID == 0 {
-		newStack, err := s.InitStack(ctx, userID, Stack{OrgID: orgID})
+		newStack, err := s.InitStack(ctx, userID, StackCreate{OrgID: orgID})
 		if err != nil {
-			return PkgImpactSummary{}, err
+			return ImpactSummary{}, err
 		}
 		stackID = newStack.ID
 	}
@@ -1512,7 +1550,7 @@ func (s *Service) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...
 			}
 		}
 
-		err := updateStackFn(ctx, stackID, state, pkg.Sources())
+		err := updateStackFn(ctx, stackID, state, template.Sources())
 		if err != nil {
 			s.log.Error("failed to update stack", zap.Error(err))
 		}
@@ -1523,16 +1561,16 @@ func (s *Service) Apply(ctx context.Context, orgID, userID influxdb.ID, opts ...
 
 	err = s.applyState(ctx, coordinator, orgID, userID, state, opt.MissingSecrets)
 	if err != nil {
-		return PkgImpactSummary{}, err
+		return ImpactSummary{}, err
 	}
 
-	pkg.applySecrets(opt.MissingSecrets)
+	template.applySecrets(opt.MissingSecrets)
 
-	return PkgImpactSummary{
-		Sources: pkg.sources,
+	return ImpactSummary{
+		Sources: template.sources,
 		StackID: stackID,
 		Diff:    state.diff(),
-		Summary: newSummaryFromStatePkg(state, pkg),
+		Summary: newSummaryFromStateTemplate(state, template),
 	}, nil
 }
 
@@ -1553,8 +1591,8 @@ func (s *Service) applyState(ctx context.Context, coordinator *rollbackCoordinat
 	// rely on the primary resources having been created.
 	appliers := [][]applier{
 		{
-			// adds secrets that are referenced it the pkg, this allows user to
-			// provide data that does not rest in the pkg.
+			// adds secrets that are referenced it the template, this allows user to
+			// provide data that does not rest in the template.
 			s.applySecrets(missingSecrets),
 		},
 		{
@@ -1617,7 +1655,7 @@ func (s *Service) applyBuckets(ctx context.Context, buckets []*stateBucket) appl
 		influxBucket, err := s.applyBucket(ctx, b)
 		if err != nil {
 			return &applyErrBody{
-				name: b.parserBkt.PkgName(),
+				name: b.parserBkt.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -1644,7 +1682,7 @@ func (s *Service) applyBuckets(ctx context.Context, buckets []*stateBucket) appl
 
 func (s *Service) rollbackBuckets(ctx context.Context, buckets []*stateBucket) error {
 	rollbackFn := func(b *stateBucket) error {
-		if !IsNew(b.stateStatus) && b.existing == nil {
+		if !IsNew(b.stateStatus) && b.existing == nil || isSystemBucket(b.existing) {
 			return nil
 		}
 
@@ -1680,6 +1718,9 @@ func (s *Service) rollbackBuckets(ctx context.Context, buckets []*stateBucket) e
 }
 
 func (s *Service) applyBucket(ctx context.Context, b *stateBucket) (influxdb.Bucket, error) {
+	if isSystemBucket(b.existing) {
+		return *b.existing, nil
+	}
 	switch {
 	case IsRemoval(b.stateStatus):
 		if err := s.bucketSVC.DeleteBucket(ctx, b.ID()); err != nil {
@@ -1733,7 +1774,7 @@ func (s *Service) applyChecks(ctx context.Context, checks []*stateCheck) applier
 		influxCheck, err := s.applyCheck(ctx, c, userID)
 		if err != nil {
 			return &applyErrBody{
-				name: c.parserCheck.PkgName(),
+				name: c.parserCheck.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -1848,7 +1889,7 @@ func (s *Service) applyDashboards(ctx context.Context, dashboards []*stateDashbo
 		influxBucket, err := s.applyDashboard(ctx, d)
 		if err != nil {
 			return &applyErrBody{
-				name: d.parserDash.PkgName(),
+				name: d.parserDash.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -1950,7 +1991,7 @@ func (s *Service) rollbackDashboards(ctx context.Context, dashs []*stateDashboar
 	return nil
 }
 
-func convertChartsToCells(ch []chart) []*influxdb.Cell {
+func convertChartsToCells(ch []*chart) []*influxdb.Cell {
 	icells := make([]*influxdb.Cell, 0, len(ch))
 	for _, c := range ch {
 		icell := &influxdb.Cell{
@@ -1989,7 +2030,7 @@ func (s *Service) applyLabels(ctx context.Context, labels []*stateLabel) applier
 		influxLabel, err := s.applyLabel(ctx, l)
 		if err != nil {
 			return &applyErrBody{
-				name: l.parserLabel.PkgName(),
+				name: l.parserLabel.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -2092,7 +2133,7 @@ func (s *Service) applyNotificationEndpoints(ctx context.Context, userID influxd
 		influxEndpoint, err := s.applyNotificationEndpoint(ctx, endpoint, userID)
 		if err != nil {
 			return &applyErrBody{
-				name: endpoint.parserEndpoint.PkgName(),
+				name: endpoint.parserEndpoint.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -2214,7 +2255,7 @@ func (s *Service) rollbackNotificationEndpoints(ctx context.Context, userID infl
 func (s *Service) applyNotificationGenerator(ctx context.Context, userID influxdb.ID, rules []*stateRule, stateEndpoints []*stateEndpoint) (endpointApplier applier, ruleApplier applier, err error) {
 	mEndpoints := make(map[string]*stateEndpoint)
 	for _, e := range stateEndpoints {
-		mEndpoints[e.parserEndpoint.PkgName()] = e
+		mEndpoints[e.parserEndpoint.MetaName()] = e
 	}
 
 	var errs applyErrs
@@ -2222,11 +2263,11 @@ func (s *Service) applyNotificationGenerator(ctx context.Context, userID influxd
 		if IsRemoval(r.stateStatus) {
 			continue
 		}
-		v, ok := mEndpoints[r.endpointPkgName()]
+		v, ok := mEndpoints[r.endpointTemplateName()]
 		if !ok {
 			errs = append(errs, &applyErrBody{
-				name: r.parserRule.PkgName(),
-				msg:  fmt.Sprintf("notification rule endpoint dependency does not exist; endpointName=%q", r.parserRule.associatedEndpoint.PkgName()),
+				name: r.parserRule.MetaName(),
+				msg:  fmt.Sprintf("notification rule endpoint dependency does not exist; endpointName=%q", r.parserRule.associatedEndpoint.MetaName()),
 			})
 			continue
 		}
@@ -2271,7 +2312,7 @@ func (s *Service) applyNotificationRules(ctx context.Context, userID influxdb.ID
 		influxRule, err := s.applyNotificationRule(ctx, rule, userID)
 		if err != nil {
 			return &applyErrBody{
-				name: rule.parserRule.PkgName(),
+				name: rule.parserRule.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -2356,7 +2397,7 @@ func (s *Service) rollbackNotificationRules(ctx context.Context, userID influxdb
 		//	1. we have no ability to find status via the Service, only to set it...
 		//	2. we have no way of inspecting an existing rule and pulling status from it
 		//	3. since this is a fallback condition, we set things to inactive as a user
-		//		is likely to follow up this failure by fixing their pkg up then reapplying
+		//		is likely to follow up this failure by fixing their template up then reapplying
 		unknownStatus := influxdb.Inactive
 
 		var err error
@@ -2459,7 +2500,7 @@ func (s *Service) applyTasks(ctx context.Context, tasks []*stateTask) applier {
 		newTask, err := s.applyTask(ctx, userID, t)
 		if err != nil {
 			return &applyErrBody{
-				name: t.parserTask.PkgName(),
+				name: t.parserTask.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -2487,6 +2528,9 @@ func (s *Service) applyTasks(ctx context.Context, tasks []*stateTask) applier {
 }
 
 func (s *Service) applyTask(ctx context.Context, userID influxdb.ID, t *stateTask) (influxdb.Task, error) {
+	if isRestrictedTask(t.existing) {
+		return *t.existing, nil
+	}
 	switch {
 	case IsRemoval(t.stateStatus):
 		if err := s.taskSVC.DeleteTask(ctx, t.ID()); err != nil {
@@ -2541,7 +2585,7 @@ func (s *Service) applyTask(ctx context.Context, userID influxdb.ID, t *stateTas
 
 func (s *Service) rollbackTasks(ctx context.Context, tasks []*stateTask) error {
 	rollbackFn := func(t *stateTask) error {
-		if !IsNew(t.stateStatus) && t.existing == nil {
+		if !IsNew(t.stateStatus) && t.existing == nil || isRestrictedTask(t.existing) {
 			return nil
 		}
 
@@ -2622,7 +2666,7 @@ func (s *Service) applyTelegrafs(ctx context.Context, userID influxdb.ID, teles 
 		existing, err := s.applyTelegrafConfig(ctx, userID, t)
 		if err != nil {
 			return &applyErrBody{
-				name: t.parserTelegraf.PkgName(),
+				name: t.parserTelegraf.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -2727,7 +2771,7 @@ func (s *Service) applyVariables(ctx context.Context, vars []*stateVariable) app
 		influxVar, err := s.applyVariable(ctx, v)
 		if err != nil {
 			return &applyErrBody{
-				name: v.parserVar.PkgName(),
+				name: v.parserVar.MetaName(),
 				msg:  err.Error(),
 			}
 		}
@@ -2767,6 +2811,7 @@ func (s *Service) rollbackVariables(ctx context.Context, variables []*stateVaria
 			_, err = s.varSVC.UpdateVariable(ctx, v.ID(), &influxdb.VariableUpdate{
 				Name:        v.existing.Name,
 				Description: v.existing.Description,
+				Selected:    v.existing.Selected,
 				Arguments:   v.existing.Arguments,
 			})
 			err = ierrors.Wrap(err, "rolling back updated variable")
@@ -2803,6 +2848,7 @@ func (s *Service) applyVariable(ctx context.Context, v *stateVariable) (influxdb
 	case IsExisting(v.stateStatus) && v.existing != nil:
 		updatedVar, err := s.varSVC.UpdateVariable(ctx, v.ID(), &influxdb.VariableUpdate{
 			Name:        v.parserVar.Name(),
+			Selected:    v.parserVar.Selected(),
 			Description: v.parserVar.Description,
 			Arguments:   v.parserVar.influxVarArgs(),
 		})
@@ -2816,6 +2862,7 @@ func (s *Service) applyVariable(ctx context.Context, v *stateVariable) (influxdb
 		influxVar := influxdb.Variable{
 			OrganizationID: v.orgID,
 			Name:           v.parserVar.Name(),
+			Selected:       v.parserVar.Selected(),
 			Description:    v.parserVar.Description,
 			Arguments:      v.parserVar.influxVarArgs(),
 		}
@@ -2968,26 +3015,27 @@ func (s *Service) rollbackLabelMappings(ctx context.Context, mappings []stateLab
 	return nil
 }
 
-func (s *Service) pkgFromApplyOpts(ctx context.Context, opt ApplyOpt) (*Pkg, error) {
+func (s *Service) templateFromApplyOpts(ctx context.Context, opt ApplyOpt) (*Template, error) {
 	if opt.StackID != 0 {
-		remotePkgs, err := s.getStackRemotePackages(ctx, opt.StackID)
+		remotes, err := s.getStackRemoteTemplates(ctx, opt.StackID)
 		if err != nil {
 			return nil, err
 		}
-		opt.Pkgs = append(opt.Pkgs, remotePkgs...)
+		opt.Templates = append(opt.Templates, remotes...)
 	}
 
-	return Combine(opt.Pkgs, ValidWithoutResources())
+	return Combine(opt.Templates, ValidWithoutResources())
 }
 
-func (s *Service) getStackRemotePackages(ctx context.Context, stackID influxdb.ID) ([]*Pkg, error) {
+func (s *Service) getStackRemoteTemplates(ctx context.Context, stackID influxdb.ID) ([]*Template, error) {
 	stack, err := s.store.ReadStackByID(ctx, stackID)
 	if err != nil {
 		return nil, err
 	}
 
-	var remotePkgs []*Pkg
-	for _, rawURL := range stack.URLs {
+	lastEvent := stack.LatestEvent()
+	var remotes []*Template
+	for _, rawURL := range lastEvent.TemplateURLs {
 		u, err := url.Parse(rawURL)
 		if err != nil {
 			return nil, &influxdb.Error{
@@ -3012,13 +3060,13 @@ func (s *Service) getStackRemotePackages(ctx context.Context, stackID influxdb.I
 			readerFn = FromFile(u.Path)
 		}
 
-		pkg, err := Parse(encoding, readerFn)
+		template, err := Parse(encoding, readerFn)
 		if err != nil {
 			return nil, err
 		}
-		remotePkgs = append(remotePkgs, pkg)
+		remotes = append(remotes, template)
 	}
-	return remotePkgs, nil
+	return remotes, nil
 }
 
 func (s *Service) updateStackAfterSuccess(ctx context.Context, stackID influxdb.ID, state *stateCoordinator, sources []string) error {
@@ -3029,55 +3077,51 @@ func (s *Service) updateStackAfterSuccess(ctx context.Context, stackID influxdb.
 
 	var stackResources []StackResource
 	for _, b := range state.mBuckets {
-		if IsRemoval(b.stateStatus) {
+		if IsRemoval(b.stateStatus) || isSystemBucket(b.existing) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindBucket, b.parserBkt.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           b.ID(),
 			Kind:         KindBucket,
-			PkgName:      b.parserBkt.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     b.parserBkt.MetaName(),
+			Associations: stateLabelsToStackAssociations(b.labels()),
 		})
 	}
 	for _, c := range state.mChecks {
 		if IsRemoval(c.stateStatus) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindCheck, c.parserCheck.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           c.ID(),
 			Kind:         KindCheck,
-			PkgName:      c.parserCheck.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     c.parserCheck.MetaName(),
+			Associations: stateLabelsToStackAssociations(c.labels()),
 		})
 	}
 	for _, d := range state.mDashboards {
 		if IsRemoval(d.stateStatus) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindDashboard, d.parserDash.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           d.ID(),
 			Kind:         KindDashboard,
-			PkgName:      d.parserDash.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     d.parserDash.MetaName(),
+			Associations: stateLabelsToStackAssociations(d.labels()),
 		})
 	}
 	for _, n := range state.mEndpoints {
 		if IsRemoval(n.stateStatus) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindNotificationEndpoint, n.parserEndpoint.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           n.ID(),
 			Kind:         KindNotificationEndpoint,
-			PkgName:      n.parserEndpoint.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     n.parserEndpoint.MetaName(),
+			Associations: stateLabelsToStackAssociations(n.labels()),
 		})
 	}
 	for _, l := range state.mLabels {
@@ -3088,68 +3132,66 @@ func (s *Service) updateStackAfterSuccess(ctx context.Context, stackID influxdb.
 			APIVersion: APIVersion,
 			ID:         l.ID(),
 			Kind:       KindLabel,
-			PkgName:    l.parserLabel.PkgName(),
+			MetaName:   l.parserLabel.MetaName(),
 		})
 	}
 	for _, r := range state.mRules {
 		if IsRemoval(r.stateStatus) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindNotificationRule, r.parserRule.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion: APIVersion,
 			ID:         r.ID(),
 			Kind:       KindNotificationRule,
-			PkgName:    r.parserRule.PkgName(),
+			MetaName:   r.parserRule.MetaName(),
 			Associations: append(
-				stateLabelsToStackAssociations(associatedLabels),
+				stateLabelsToStackAssociations(r.labels()),
 				r.endpointAssociation(),
 			),
 		})
 	}
 	for _, t := range state.mTasks {
-		if IsRemoval(t.stateStatus) {
+		if IsRemoval(t.stateStatus) || isRestrictedTask(t.existing) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindTask, t.parserTask.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           t.ID(),
 			Kind:         KindTask,
-			PkgName:      t.parserTask.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     t.parserTask.MetaName(),
+			Associations: stateLabelsToStackAssociations(t.labels()),
 		})
 	}
 	for _, t := range state.mTelegrafs {
 		if IsRemoval(t.stateStatus) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindTelegraf, t.parserTelegraf.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           t.ID(),
 			Kind:         KindTelegraf,
-			PkgName:      t.parserTelegraf.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     t.parserTelegraf.MetaName(),
+			Associations: stateLabelsToStackAssociations(t.labels()),
 		})
 	}
 	for _, v := range state.mVariables {
 		if IsRemoval(v.stateStatus) {
 			continue
 		}
-		associatedLabels := state.labelAssociations(KindVariable, v.parserVar.PkgName())
 		stackResources = append(stackResources, StackResource{
 			APIVersion:   APIVersion,
 			ID:           v.ID(),
 			Kind:         KindVariable,
-			PkgName:      v.parserVar.PkgName(),
-			Associations: stateLabelsToStackAssociations(associatedLabels),
+			MetaName:     v.parserVar.MetaName(),
+			Associations: stateLabelsToStackAssociations(v.labels()),
 		})
 	}
-	stack.Resources = stackResources
-
-	stack.Sources = sources
-	stack.UpdatedAt = time.Now()
+	ev := stack.LatestEvent()
+	ev.EventType = StackEventUpdate
+	ev.Resources = stackResources
+	ev.Sources = sources
+	ev.UpdatedAt = s.timeGen.Now()
+	stack.Events = append(stack.Events, ev)
 	return s.store.UpdateStack(ctx, stack)
 }
 
@@ -3160,17 +3202,18 @@ func (s *Service) updateStackAfterRollback(ctx context.Context, stackID influxdb
 	}
 
 	type key struct {
-		k       Kind
-		pkgName string
+		k        Kind
+		metaName string
 	}
-	newKey := func(k Kind, pkgName string) key {
-		return key{k: k, pkgName: pkgName}
+	newKey := func(k Kind, metaName string) key {
+		return key{k: k, metaName: metaName}
 	}
 
+	latestEvent := stack.LatestEvent()
 	existingResources := make(map[key]*StackResource)
-	for i := range stack.Resources {
-		res := stack.Resources[i]
-		existingResources[newKey(res.Kind, res.PkgName)] = &stack.Resources[i]
+	for i := range latestEvent.Resources {
+		res := latestEvent.Resources[i]
+		existingResources[newKey(res.Kind, res.MetaName)] = &latestEvent.Resources[i]
 	}
 
 	hasChanges := false
@@ -3179,42 +3222,42 @@ func (s *Service) updateStackAfterRollback(ctx context.Context, stackID influxdb
 		// when resource is not to be removed this is a nothing burger, as it should be
 		// rolled back to previous state.
 		for _, b := range state.mBuckets {
-			res, ok := existingResources[newKey(KindBucket, b.parserBkt.PkgName())]
+			res, ok := existingResources[newKey(KindBucket, b.parserBkt.MetaName())]
 			if ok && res.ID != b.ID() {
 				hasChanges = true
 				res.ID = b.existing.ID
 			}
 		}
 		for _, c := range state.mChecks {
-			res, ok := existingResources[newKey(KindCheck, c.parserCheck.PkgName())]
+			res, ok := existingResources[newKey(KindCheck, c.parserCheck.MetaName())]
 			if ok && res.ID != c.ID() {
 				hasChanges = true
 				res.ID = c.existing.GetID()
 			}
 		}
 		for _, d := range state.mDashboards {
-			res, ok := existingResources[newKey(KindDashboard, d.parserDash.PkgName())]
+			res, ok := existingResources[newKey(KindDashboard, d.parserDash.MetaName())]
 			if ok && res.ID != d.ID() {
 				hasChanges = true
 				res.ID = d.existing.ID
 			}
 		}
 		for _, e := range state.mEndpoints {
-			res, ok := existingResources[newKey(KindNotificationEndpoint, e.parserEndpoint.PkgName())]
+			res, ok := existingResources[newKey(KindNotificationEndpoint, e.parserEndpoint.MetaName())]
 			if ok && res.ID != e.ID() {
 				hasChanges = true
 				res.ID = e.existing.GetID()
 			}
 		}
 		for _, l := range state.mLabels {
-			res, ok := existingResources[newKey(KindLabel, l.parserLabel.PkgName())]
+			res, ok := existingResources[newKey(KindLabel, l.parserLabel.MetaName())]
 			if ok && res.ID != l.ID() {
 				hasChanges = true
 				res.ID = l.existing.ID
 			}
 		}
 		for _, r := range state.mRules {
-			res, ok := existingResources[newKey(KindNotificationRule, r.parserRule.PkgName())]
+			res, ok := existingResources[newKey(KindNotificationRule, r.parserRule.MetaName())]
 			if !ok {
 				continue
 			}
@@ -3241,21 +3284,21 @@ func (s *Service) updateStackAfterRollback(ctx context.Context, stackID influxdb
 			}
 		}
 		for _, t := range state.mTasks {
-			res, ok := existingResources[newKey(KindTask, t.parserTask.PkgName())]
+			res, ok := existingResources[newKey(KindTask, t.parserTask.MetaName())]
 			if ok && res.ID != t.ID() {
 				hasChanges = true
 				res.ID = t.existing.ID
 			}
 		}
 		for _, t := range state.mTelegrafs {
-			res, ok := existingResources[newKey(KindTelegraf, t.parserTelegraf.PkgName())]
+			res, ok := existingResources[newKey(KindTelegraf, t.parserTelegraf.MetaName())]
 			if ok && res.ID != t.ID() {
 				hasChanges = true
 				res.ID = t.existing.ID
 			}
 		}
 		for _, v := range state.mVariables {
-			res, ok := existingResources[newKey(KindVariable, v.parserVar.PkgName())]
+			res, ok := existingResources[newKey(KindVariable, v.parserVar.MetaName())]
 			if ok && res.ID != v.ID() {
 				hasChanges = true
 				res.ID = v.existing.ID
@@ -3266,7 +3309,10 @@ func (s *Service) updateStackAfterRollback(ctx context.Context, stackID influxdb
 		return nil
 	}
 
-	stack.UpdatedAt = time.Now()
+	latestEvent.EventType = StackEventUpdate
+	latestEvent.Sources = sources
+	latestEvent.UpdatedAt = s.timeGen.Now()
+	stack.Events = append(stack.Events, latestEvent)
 	return s.store.UpdateStack(ctx, stack)
 }
 
@@ -3315,10 +3361,84 @@ func (s *Service) getAllPlatformVariables(ctx context.Context, orgID influxdb.ID
 	return existingVars, nil
 }
 
-func newSummaryFromStatePkg(state *stateCoordinator, pkg *Pkg) Summary {
+func (s *Service) getAllChecks(ctx context.Context, orgID influxdb.ID) ([]influxdb.Check, error) {
+	filter := influxdb.CheckFilter{OrgID: &orgID}
+	const limit = 100
+
+	var (
+		out    []influxdb.Check
+		offset int
+	)
+	for {
+		checks, _, err := s.checkSVC.FindChecks(ctx, filter, influxdb.FindOptions{
+			Limit:  limit,
+			Offset: offset,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, checks...)
+		if len(checks) < limit {
+			break
+		}
+		offset += limit
+	}
+	return out, nil
+}
+
+func (s *Service) getNotificationRules(ctx context.Context, orgID influxdb.ID) ([]influxdb.NotificationRule, error) {
+	filter := influxdb.NotificationRuleFilter{OrgID: &orgID}
+	const limit = 100
+
+	var (
+		out    []influxdb.NotificationRule
+		offset int
+	)
+	for {
+		rules, _, err := s.ruleSVC.FindNotificationRules(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rules...)
+		if len(rules) < limit {
+			break
+		}
+		offset += limit
+	}
+	return out, nil
+
+}
+
+func (s *Service) getAllTasks(ctx context.Context, orgID influxdb.ID) ([]*influxdb.Task, error) {
+	var (
+		out     []*influxdb.Task
+		afterID *influxdb.ID
+	)
+	for {
+		f := influxdb.TaskFilter{
+			OrganizationID: &orgID,
+			Limit:          influxdb.TaskMaxPageSize,
+		}
+		if afterID != nil {
+			f.After = afterID
+		}
+		tasks, _, err := s.taskSVC.FindTasks(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		if len(tasks) == 0 {
+			break
+		}
+		out = append(out, tasks...)
+		afterID = &tasks[len(tasks)-1].ID
+	}
+	return out, nil
+}
+
+func newSummaryFromStateTemplate(state *stateCoordinator, template *Template) Summary {
 	stateSum := state.summary()
-	stateSum.MissingEnvs = pkg.missingEnvRefs()
-	stateSum.MissingSecrets = pkg.missingSecrets()
+	stateSum.MissingEnvs = template.missingEnvRefs()
+	stateSum.MissingSecrets = template.missingSecrets()
 	return stateSum
 }
 
@@ -3326,8 +3446,8 @@ func stateLabelsToStackAssociations(stateLabels []*stateLabel) []StackResourceAs
 	var out []StackResourceAssociation
 	for _, l := range stateLabels {
 		out = append(out, StackResourceAssociation{
-			Kind:    KindLabel,
-			PkgName: l.parserLabel.PkgName(),
+			Kind:     KindLabel,
+			MetaName: l.parserLabel.MetaName(),
 		})
 	}
 	return out
@@ -3336,7 +3456,7 @@ func stateLabelsToStackAssociations(stateLabels []*stateLabel) []StackResourceAs
 func applyFailErr(method string, ident stateIdentity, err error) error {
 	v := ident.id.String()
 	if v == "" {
-		v = ident.pkgName
+		v = ident.metaName
 	}
 	msg := fmt.Sprintf("failed to %s %s[%q]", method, ident.resourceType, v)
 	return ierrors.Wrap(err, msg)
@@ -3435,10 +3555,11 @@ func (r *rollbackCoordinator) runTilEnd(ctx context.Context, orgID, userID influ
 				defer cancel()
 
 				defer func() {
-					if recover() != nil {
-						r.logger.Panic(
+					if err := recover(); err != nil {
+						r.logger.Error(
 							"panic applying "+resource,
 							zap.String("stack_trace", fmt.Sprintf("%+v", stack.Trace())),
+							zap.Reflect("panic", err),
 						)
 						errStr.add(errMsg{
 							resource: resource,
@@ -3549,7 +3670,7 @@ func (a applyErrs) toError(resType, msg string) error {
 	}
 	errMsg := fmt.Sprintf(`resource_type=%q err=%q`, resType, msg)
 	for _, e := range a {
-		errMsg += fmt.Sprintf("\n\tpkg_name=%q err_msg=%q", e.name, e.msg)
+		errMsg += fmt.Sprintf("\n\tmetadata_name=%q err_msg=%q", e.name, e.msg)
 	}
 	return errors.New(errMsg)
 }
@@ -3564,8 +3685,16 @@ func validURLs(urls []string) error {
 	return nil
 }
 
-func labelSlcToMap(labels []*label) map[string]*label {
-	m := make(map[string]*label)
+func isRestrictedTask(t *influxdb.Task) bool {
+	return t != nil && t.Type != influxdb.TaskSystemType
+}
+
+func isSystemBucket(b *influxdb.Bucket) bool {
+	return b != nil && b.Type == influxdb.BucketTypeSystem
+}
+
+func labelSlcToMap(labels []*stateLabel) map[string]*stateLabel {
+	m := make(map[string]*stateLabel)
 	for i := range labels {
 		m[labels[i].Name()] = labels[i]
 	}

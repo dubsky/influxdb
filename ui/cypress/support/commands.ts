@@ -1,4 +1,5 @@
 import {NotificationEndpoint} from '../../src/types'
+import 'cypress-file-upload'
 
 export const signin = (): Cypress.Chainable<Cypress.Response> => {
   return cy.fixture('user').then(({username, password}) => {
@@ -113,12 +114,14 @@ export const createDashboardTemplate = (
   })
 }
 
-export const createOrg = (): Cypress.Chainable<Cypress.Response> => {
+export const createOrg = (
+  name = 'test org'
+): Cypress.Chainable<Cypress.Response> => {
   return cy.request({
     method: 'POST',
     url: '/api/v2/orgs',
     body: {
-      name: 'test org',
+      name,
     },
   })
 }
@@ -356,6 +359,50 @@ export const createTelegraf = (
   })
 }
 
+export const createRule = (
+  orgID: string,
+  endpointID: string,
+  name = ''
+): Cypress.Chainable<Cypress.Response> => {
+  return cy.request({
+    method: 'POST',
+    url: 'api/v2/notificationRules',
+    body: genRule({endpointID, orgID, name}),
+  })
+}
+
+type RuleArgs = {
+  endpointID: string
+  orgID: string
+  type?: string
+  name?: string
+}
+
+const genRule = ({
+  endpointID,
+  orgID,
+  type = 'slack',
+  name = 'r1',
+}: RuleArgs) => ({
+  type,
+  every: '20m',
+  offset: '1m',
+  url: '',
+  orgID,
+  name,
+  activeStatus: 'active',
+  status: 'active',
+  endpointID,
+  tagRules: [],
+  labels: [],
+  statusRules: [
+    {currentLevel: 'CRIT', period: '1h', count: 1, previousLevel: 'INFO'},
+  ],
+  description: '',
+  messageTemplate: 'im a message',
+  channel: '',
+})
+
 /*
 [{action: 'write', resource: {type: 'views'}},
       {action: 'write', resource: {type: 'documents'}},
@@ -392,6 +439,26 @@ export const flush = () => {
   cy.request({
     method: 'GET',
     url: '/debug/flush',
+  })
+}
+
+export const lines = (numLines = 3) => {
+  // each line is 10 seconds before the previous line
+  const offset_ms = 10_000
+  const now = Date.now()
+  const nanos_per_ms = '000000'
+
+  const decendingValues = Array(numLines)
+    .fill(0)
+    .map((_, i) => i)
+    .reverse()
+
+  const incrementingTimes = decendingValues.map(val => {
+    return now - offset_ms * val
+  })
+
+  return incrementingTimes.map((tm, i) => {
+    return `m,tk1=tv1 v=${i + 1} ${tm}${nanos_per_ms}`
   })
 }
 
@@ -455,6 +522,8 @@ export const createEndpoint = (
 /* eslint-disable */
 // notification endpoints
 Cypress.Commands.add('createEndpoint', createEndpoint)
+// notification rules
+Cypress.Commands.add('createRule', createRule)
 
 // assertions
 Cypress.Commands.add('fluxEqual', fluxEqual)

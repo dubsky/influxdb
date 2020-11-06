@@ -82,6 +82,8 @@ func LabelService(
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt := tt
+			t.Parallel()
 			tt.fn(init, t)
 		})
 	}
@@ -113,7 +115,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "label_1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -124,7 +126,7 @@ func CreateLabel(
 				label: &influxdb.Label{
 					ID:    MustIDBase16(labelTwoID),
 					Name:  "label_1",
-					OrgID: MustIDBase16(orgOneID),
+					OrgID: idOne,
 					Properties: map[string]string{
 						"color": "fff000",
 					},
@@ -135,7 +137,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "label_1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -156,7 +158,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "tag_1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -167,7 +169,7 @@ func CreateLabel(
 				label: &influxdb.Label{
 					ID:    MustIDBase16(labelOneID),
 					Name:  "     tag_1     ",
-					OrgID: MustIDBase16(orgOneID),
+					OrgID: idOne,
 					Properties: map[string]string{
 						"color": "fff000",
 					},
@@ -178,7 +180,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "tag_1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -199,7 +201,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "tag_1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -210,7 +212,7 @@ func CreateLabel(
 				label: &influxdb.Label{
 					ID:    MustIDBase16(labelOneID),
 					Name:  "TAG_1",
-					OrgID: MustIDBase16(orgOneID),
+					OrgID: idOne,
 					Properties: map[string]string{
 						"color": "fff000",
 					},
@@ -221,7 +223,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "tag_1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -244,7 +246,7 @@ func CreateLabel(
 				label: &influxdb.Label{
 					Name:  "Tag2",
 					ID:    MustIDBase16(labelOneID),
-					OrgID: MustIDBase16(orgOneID),
+					OrgID: idOne,
 					Properties: map[string]string{
 						"color": "fff000",
 					},
@@ -255,7 +257,7 @@ func CreateLabel(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag2",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Properties: map[string]string{
 							"color": "fff000",
 						},
@@ -311,12 +313,12 @@ func FindLabels(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
 						Name:  "Tag2",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
@@ -328,12 +330,12 @@ func FindLabels(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
 						Name:  "Tag2",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
@@ -345,24 +347,24 @@ func FindLabels(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
 						Name:  "Tag2",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 					{
 						ID:    MustIDBase16(labelThreeID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgTwoID),
+						OrgID: idTwo,
 					},
 				},
 			},
 			args: args{
 				filter: influxdb.LabelFilter{
 					Name:  "Tag1",
-					OrgID: idPtr(MustIDBase16(orgOneID)),
+					OrgID: idPtr(idOne),
 				},
 			},
 			wants: wants{
@@ -370,7 +372,7 @@ func FindLabels(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
@@ -382,14 +384,14 @@ func FindLabels(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
 			args: args{
 				filter: influxdb.LabelFilter{
 					Name:  "TAG1",
-					OrgID: idPtr(MustIDBase16(orgOneID)),
+					OrgID: idPtr(idOne),
 				},
 			},
 			wants: wants{
@@ -397,7 +399,7 @@ func FindLabels(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
@@ -444,12 +446,12 @@ func FindLabelByID(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
 						Name:  "Tag2",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
@@ -460,7 +462,7 @@ func FindLabelByID(
 				label: &influxdb.Label{
 					ID:    MustIDBase16(labelOneID),
 					Name:  "Tag1",
-					OrgID: MustIDBase16(orgOneID),
+					OrgID: idOne,
 				},
 			},
 		},
@@ -522,7 +524,7 @@ func UpdateLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 					},
 				},
@@ -537,7 +539,7 @@ func UpdateLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "NotTag1",
 					},
 				},
@@ -549,12 +551,12 @@ func UpdateLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_1",
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_2",
 					},
 				},
@@ -569,12 +571,12 @@ func UpdateLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_1",
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_2",
 					},
 				},
@@ -591,12 +593,12 @@ func UpdateLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_1",
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_2",
 					},
 				},
@@ -611,12 +613,12 @@ func UpdateLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_1",
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "tag_2",
 					},
 				},
@@ -633,7 +635,7 @@ func UpdateLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 					},
 				},
@@ -650,7 +652,7 @@ func UpdateLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 						Properties: map[string]string{
 							"color": "fff000",
@@ -665,7 +667,7 @@ func UpdateLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 						Properties: map[string]string{
 							"color":       "fff000",
@@ -686,7 +688,7 @@ func UpdateLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 						Properties: map[string]string{
 							"color":       "abc123",
@@ -702,7 +704,7 @@ func UpdateLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 						Properties: map[string]string{
 							"color":       "fff000",
@@ -723,7 +725,7 @@ func UpdateLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 						Properties: map[string]string{
 							"color": "fff000",
@@ -799,12 +801,12 @@ func DeleteLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 					},
 					{
 						ID:    MustIDBase16(labelTwoID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag2",
 					},
 				},
@@ -816,7 +818,7 @@ func DeleteLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelTwoID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag2",
 					},
 				},
@@ -828,7 +830,7 @@ func DeleteLabel(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 					},
 				},
@@ -840,7 +842,7 @@ func DeleteLabel(
 				labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 					},
 				},
@@ -897,7 +899,7 @@ func CreateLabelMapping(
 				Labels: []*influxdb.Label{
 					{
 						ID:    MustIDBase16(labelOneID),
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 						Name:  "Tag1",
 					},
 				},
@@ -905,10 +907,10 @@ func CreateLabelMapping(
 			args: args{
 				mapping: &influxdb.LabelMapping{
 					LabelID:    MustIDBase16(labelOneID),
-					ResourceID: MustIDBase16(bucketOneID),
+					ResourceID: idOne,
 				},
 				filter: &influxdb.LabelMappingFilter{
-					ResourceID: MustIDBase16(bucketOneID),
+					ResourceID: idOne,
 				},
 			},
 			wants: wants{
@@ -916,7 +918,7 @@ func CreateLabelMapping(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 			},
@@ -930,7 +932,7 @@ func CreateLabelMapping(
 			args: args{
 				mapping: &influxdb.LabelMapping{
 					LabelID:    MustIDBase16(labelOneID),
-					ResourceID: MustIDBase16(bucketOneID),
+					ResourceID: idOne,
 				},
 			},
 			wants: wants{
@@ -994,23 +996,23 @@ func DeleteLabelMapping(
 					{
 						ID:    MustIDBase16(labelOneID),
 						Name:  "Tag1",
-						OrgID: MustIDBase16(orgOneID),
+						OrgID: idOne,
 					},
 				},
 				Mappings: []*influxdb.LabelMapping{
 					{
 						LabelID:    MustIDBase16(labelOneID),
-						ResourceID: MustIDBase16(bucketOneID),
+						ResourceID: idOne,
 					},
 				},
 			},
 			args: args{
 				mapping: &influxdb.LabelMapping{
 					LabelID:    MustIDBase16(labelOneID),
-					ResourceID: MustIDBase16(bucketOneID),
+					ResourceID: idOne,
 				},
 				filter: influxdb.LabelMappingFilter{
-					ResourceID: MustIDBase16(bucketOneID),
+					ResourceID: idOne,
 				},
 			},
 			wants: wants{

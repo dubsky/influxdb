@@ -17,43 +17,12 @@ import (
 type StorageReader interface {
 	ReadFilter(ctx context.Context, spec ReadFilterSpec, alloc *memory.Allocator) (TableIterator, error)
 	ReadGroup(ctx context.Context, spec ReadGroupSpec, alloc *memory.Allocator) (TableIterator, error)
+	ReadWindowAggregate(ctx context.Context, spec ReadWindowAggregateSpec, alloc *memory.Allocator) (TableIterator, error)
 
 	ReadTagKeys(ctx context.Context, spec ReadTagKeysSpec, alloc *memory.Allocator) (TableIterator, error)
 	ReadTagValues(ctx context.Context, spec ReadTagValuesSpec, alloc *memory.Allocator) (TableIterator, error)
 
 	Close()
-}
-
-type GroupCapability interface {
-	HaveCount() bool
-	HaveSum() bool
-	HaveFirst() bool
-	HaveLast() bool
-}
-
-type GroupAggregator interface {
-	GetGroupCapability(ctx context.Context) GroupCapability
-}
-
-// WindowAggregateCapability describes what is supported by WindowAggregateReader.
-type WindowAggregateCapability interface {
-	HaveMin() bool
-	HaveMax() bool
-	HaveMean() bool
-	HaveCount() bool
-	HaveSum() bool
-	HaveFirst() bool
-	HaveLast() bool
-}
-
-// WindowAggregateReader implements the WindowAggregate capability.
-type WindowAggregateReader interface {
-	// GetWindowAggregateCapability will get a detailed list of what the RPC call supports
-	// for window aggregate.
-	GetWindowAggregateCapability(ctx context.Context) WindowAggregateCapability
-
-	// ReadWindowAggregate will read a table using the WindowAggregate method.
-	ReadWindowAggregate(ctx context.Context, spec ReadWindowAggregateSpec, alloc *memory.Allocator) (TableIterator, error)
 }
 
 type ReadFilterSpec struct {
@@ -89,9 +58,11 @@ type ReadTagValuesSpec struct {
 type ReadWindowAggregateSpec struct {
 	ReadFilterSpec
 	WindowEvery int64
+	Offset      int64
 	Aggregates  []plan.ProcedureKind
 	CreateEmpty bool
 	TimeColumn  string
+	Window      execute.Window
 }
 
 func (spec *ReadWindowAggregateSpec) Name() string {

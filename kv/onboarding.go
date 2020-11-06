@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
 	"github.com/influxdata/influxdb/v2"
 )
 
@@ -15,11 +13,6 @@ var (
 )
 
 var _ influxdb.OnboardingService = (*Service)(nil)
-
-func (s *Service) initializeOnboarding(ctx context.Context, tx Tx) error {
-	_, err := tx.Bucket(onboardingBucket)
-	return err
-}
 
 // IsOnboarding means if the initial setup of influxdb has happened.
 // true means that the onboarding setup has not yet happened.
@@ -117,7 +110,7 @@ func (s *Service) OnboardInitialUser(ctx context.Context, req *influxdb.Onboardi
 	o := &influxdb.Organization{Name: req.Org}
 	bucket := &influxdb.Bucket{
 		Name:            req.Bucket,
-		RetentionPeriod: time.Duration(req.RetentionPeriod) * time.Hour,
+		RetentionPeriod: req.RetentionPeriod,
 	}
 	mapping := &influxdb.UserResourceMapping{
 		ResourceType: influxdb.OrgsResourceType,
@@ -129,12 +122,18 @@ func (s *Service) OnboardInitialUser(ctx context.Context, req *influxdb.Onboardi
 		Token:       req.Token,
 	}
 
+	var passwordHash []byte
+	passwordHash, err = s.generatePasswordHash(req.Password)
+	if err != nil {
+		return nil, err
+	}
+
 	err = s.kv.Update(ctx, func(tx Tx) error {
 		if err := s.createUser(ctx, tx, u); err != nil {
 			return err
 		}
 
-		if err := s.setPassword(ctx, tx, u.ID, req.Password); err != nil {
+		if err := s.setPasswordHashTx(ctx, tx, u.ID, passwordHash); err != nil {
 			return err
 		}
 

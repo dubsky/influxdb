@@ -1,11 +1,10 @@
 // Libraries
 import React, {FC, useEffect} from 'react'
-import {connect} from 'react-redux'
+import {useDispatch} from 'react-redux'
 
 // Components
 import TimeMachine from 'src/timeMachine/components/TimeMachine'
 import LimitChecker from 'src/cloud/components/LimitChecker'
-import RateLimitAlert from 'src/cloud/components/RateLimitAlert'
 
 // Actions
 import {setActiveTimeMachine} from 'src/timeMachine/actions'
@@ -16,27 +15,18 @@ import {HoverTimeProvider} from 'src/dashboards/utils/hoverTime'
 import {queryBuilderFetcher} from 'src/timeMachine/apis/QueryBuilderFetcher'
 import {readQueryParams} from 'src/shared/utils/queryParams'
 
-interface DispatchProps {
-  onSetActiveTimeMachine: typeof setActiveTimeMachine
-  onSetBuilderBucketIfExists: typeof setBuilderBucketIfExists
-}
+const DataExplorer: FC = () => {
+  const dispatch = useDispatch()
 
-type Props = DispatchProps
-
-const DataExplorer: FC<Props> = ({
-  onSetActiveTimeMachine,
-  onSetBuilderBucketIfExists,
-}) => {
   useEffect(() => {
     const bucketQP = readQueryParams()['bucket']
-    onSetActiveTimeMachine('de')
+    dispatch(setActiveTimeMachine('de'))
     queryBuilderFetcher.clearCache()
-    onSetBuilderBucketIfExists(bucketQP)
-  }, [])
+    dispatch(setBuilderBucketIfExists(bucketQP))
+  }, [dispatch])
 
   return (
     <LimitChecker>
-      <RateLimitAlert />
       <div className="data-explorer">
         <HoverTimeProvider>
           <TimeMachine />
@@ -46,12 +36,4 @@ const DataExplorer: FC<Props> = ({
   )
 }
 
-const mdtp: DispatchProps = {
-  onSetActiveTimeMachine: setActiveTimeMachine,
-  onSetBuilderBucketIfExists: setBuilderBucketIfExists,
-}
-
-export default connect<{}, DispatchProps, {}>(
-  null,
-  mdtp
-)(DataExplorer)
+export default DataExplorer

@@ -21,16 +21,14 @@ func initOnboardHttpService(f itesting.OnboardingFields, t *testing.T) (influxdb
 	if err != nil {
 		t.Fatal(err)
 	}
-	storage, err := tenant.NewStore(s)
-	if err != nil {
-		t.Fatal(err)
-	}
+
+	storage := tenant.NewStore(s)
 
 	authsvc := kv.NewService(zaptest.NewLogger(t), s)
 
 	ten := tenant.NewService(storage)
 
-	svc := tenant.NewOnboardService(storage, authsvc)
+	svc := tenant.NewOnboardService(ten, authsvc)
 
 	ctx := context.Background()
 	if !f.IsOnboarding {

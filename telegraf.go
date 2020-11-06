@@ -32,10 +32,6 @@ var (
 
 // TelegrafConfigStore represents a service for managing telegraf config data.
 type TelegrafConfigStore interface {
-	// UserResourceMappingService must be part of all TelegrafConfigStore service,
-	// for create, search, delete.
-	UserResourceMappingService
-
 	// FindTelegrafConfigByID returns a single telegraf config by ID.
 	FindTelegrafConfigByID(ctx context.Context, id ID) (*TelegrafConfig, error)
 
@@ -58,7 +54,6 @@ type TelegrafConfigStore interface {
 type TelegrafConfigFilter struct {
 	OrgID        *ID
 	Organization *string
-	UserResourceMappingFilter
 }
 
 // TelegrafConfig stores telegraf config for one telegraf instance.
@@ -82,11 +77,7 @@ func (tc *TelegrafConfig) CountPlugins() map[string]float64 {
 		if len(v) < 2 {
 			continue
 		}
-		if _, ok := plugins[v[1]]; ok {
-			plugins[v[1]]++
-		} else {
-			plugins[v[1]] = 1
-		}
+		plugins[v[1]]++
 	}
 
 	return plugins
@@ -192,7 +183,7 @@ func (t *buckets) UnmarshalTOML(data interface{}) error {
 		}
 	}
 
-	*t = buckets(bkts)
+	*t = bkts
 
 	return nil
 }

@@ -8,10 +8,7 @@ import (
 	"github.com/influxdata/influxdb/v2/kv"
 )
 
-var (
-	urmBucket            = []byte("userresourcemappingsv1")
-	urmByUserIndexBucket = []byte("userresourcemappingsbyuserindexv1")
-)
+var urmBucket = []byte("userresourcemappingsv1")
 
 // NOTE(affo): On URM creation, we check that the user exists.
 // We do not check that the resource it is pointing to exists.
@@ -73,24 +70,30 @@ func (s *Store) ListURMs(ctx context.Context, tx kv.Tx, filter influxdb.UserReso
 	}
 
 	if filter.UserID.Valid() {
-		// urm by user index lookup
-		userID, _ := filter.UserID.Encode()
-		if err := s.urmByUserIndex.Walk(ctx, tx, userID, func(k, v []byte) error {
+		var (
+			// urm by user index lookup
+			userID, _ = filter.UserID.Encode()
+			seen      int
+		)
+
+		err := s.urmByUserIndex.Walk(ctx, tx, userID, func(k, v []byte) (bool, error) {
 			m := &influxdb.UserResourceMapping{}
 			if err := json.Unmarshal(v, m); err != nil {
-				return CorruptURMError(err)
+				return false, CorruptURMError(err)
 			}
 
-			if filterFn(m) {
+			// respect offset parameter
+			reachedOffset := (len(opt) == 0 || seen >= opt[0].Offset)
+			if reachedOffset && filterFn(m) {
 				ms = append(ms, m)
 			}
 
-			return nil
-		}); err != nil {
-			return nil, err
-		}
+			seen++
 
-		return ms, nil
+			return (len(opt) == 0 || opt[0].Limit <= 0 || len(ms) < opt[0].Limit), nil
+		})
+
+		return ms, err
 	}
 
 	// for now the best we can do is use the resourceID if we have that as a forward cursor option
@@ -122,7 +125,7 @@ func (s *Store) ListURMs(ctx context.Context, tx kv.Tx, filter influxdb.UserReso
 			ms = append(ms, m)
 		}
 
-		if len(opt) > 0 && len(ms) >= opt[0].Limit {
+		if len(opt) > 0 && opt[0].Limit > 0 && len(ms) >= opt[0].Limit {
 			break
 		}
 	}

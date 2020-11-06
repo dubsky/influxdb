@@ -19,7 +19,7 @@ func cmdPing(f *globalFlags, opts genericCLIOpts) *cobra.Command {
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: flags.skipVerify},
 			},
 		}
-		url := flags.Host + "/health"
+		url := flags.config().Host + "/health"
 		resp, err := c.Get(url)
 		if err != nil {
 			return err
@@ -46,6 +46,7 @@ func cmdPing(f *globalFlags, opts genericCLIOpts) *cobra.Command {
 	cmd := opts.newCmd("ping", runE, true)
 	cmd.Short = "Check the InfluxDB /health endpoint"
 	cmd.Long = `Checks the health of a running InfluxDB instance by querying /health. Does not require valid token.`
+	f.registerFlags(cmd, "token")
 
 	return cmd
 }

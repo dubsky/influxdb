@@ -1,10 +1,16 @@
 // Libraries
 import React, {PureComponent, MouseEvent} from 'react'
 import CopyToClipboard from 'react-copy-to-clipboard'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 
 // Components
-import {Button, ComponentColor, ComponentSize} from '@influxdata/clockface'
+import {
+  Button,
+  ComponentColor,
+  ComponentSize,
+  ButtonShape,
+  IconFont,
+} from '@influxdata/clockface'
 
 // Constants
 import {
@@ -17,37 +23,50 @@ import {notify as notifyAction} from 'src/shared/actions/notifications'
 import {Notification} from 'src/types'
 
 interface OwnProps {
+  shape: ButtonShape
+  icon?: IconFont
+  buttonText: string
   textToCopy: string
   contentName: string // if copying a script, its "script"
   size: ComponentSize
   color: ComponentColor
   onCopyText?: (text: string, status: boolean) => Notification
+  testID: string
+  onClick?: () => void
 }
 
-interface DispatchProps {
-  notify: typeof notifyAction
-}
-
-type Props = OwnProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & ReduxProps
 
 class CopyButton extends PureComponent<Props> {
   public static defaultProps = {
+    shape: ButtonShape.Default,
+    buttonText: 'Copy to Clipboard',
     size: ComponentSize.ExtraSmall,
     color: ComponentColor.Secondary,
+    testID: 'button-copy',
   }
 
   public render() {
-    const {textToCopy, color, size} = this.props
+    const {textToCopy, color, size, icon, shape, testID} = this.props
+
+    let buttonText = this.props.buttonText
+
+    if (shape === ButtonShape.Square) {
+      buttonText = undefined
+    }
 
     return (
       <CopyToClipboard text={textToCopy} onCopy={this.handleCopyAttempt}>
         <Button
+          shape={shape}
+          icon={icon}
           size={size}
           color={color}
-          titleText="Copy to Clipboard"
-          text="Copy to Clipboard"
+          titleText={buttonText}
+          text={buttonText}
           onClick={this.handleClickCopy}
-          testID="button-copy"
+          testID={testID}
         />
       </CopyToClipboard>
     )
@@ -61,7 +80,11 @@ class CopyButton extends PureComponent<Props> {
     copiedText: string,
     isSuccessful: boolean
   ): void => {
-    const {notify, onCopyText} = this.props
+    const {notify, onCopyText, onClick} = this.props
+
+    if (onClick) {
+      onClick()
+    }
 
     if (onCopyText) {
       notify(onCopyText(copiedText, isSuccessful))
@@ -80,11 +103,10 @@ class CopyButton extends PureComponent<Props> {
   }
 }
 
-const mdtp: DispatchProps = {
+const mdtp = {
   notify: notifyAction,
 }
 
-export default connect<{}, DispatchProps, OwnProps>(
-  null,
-  mdtp
-)(CopyButton)
+const connector = connect(null, mdtp)
+
+export default connector(CopyButton)

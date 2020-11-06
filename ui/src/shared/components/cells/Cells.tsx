@@ -1,6 +1,6 @@
 // Libraries
 import React, {Component} from 'react'
-import {connect} from 'react-redux'
+import {connect, ConnectedProps} from 'react-redux'
 import ReactGridLayout, {WidthProvider, Layout} from 'react-grid-layout'
 import {get} from 'lodash'
 
@@ -8,6 +8,7 @@ import {get} from 'lodash'
 const Grid = WidthProvider(ReactGridLayout)
 import CellComponent from 'src/shared/components/cells/Cell'
 import GradientBorder from 'src/shared/components/cells/GradientBorder'
+import ScrollDetector from 'src/perf/components/ScrollDetector'
 
 // Actions
 import {updateCells} from 'src/cells/actions/thunks'
@@ -20,52 +21,49 @@ import {getCells} from 'src/cells/selectors'
 import {LAYOUT_MARGIN, DASHBOARD_LAYOUT_ROW_HEIGHT} from 'src/shared/constants'
 
 // Types
-import {AppState, Cell, RemoteDataState, View} from 'src/types'
+import {AppState, Cell, RemoteDataState} from 'src/types'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
-type ViewsByID = {[viewID: string]: View}
-
-interface StateProps {
-  views: ViewsByID
-  cells: Cell[]
-  dashboard: string
-}
-
-interface DispatchProps {
-  updateCells: typeof updateCells
-}
 
 interface OwnProps {
   manualRefresh: number
 }
 
-type Props = StateProps & OwnProps & DispatchProps
+type ReduxProps = ConnectedProps<typeof connector>
+type Props = OwnProps & ReduxProps
 
 @ErrorHandling
 class Cells extends Component<Props> {
   public render() {
-    const {cells, manualRefresh} = this.props
+    const {views, cells, manualRefresh} = this.props
 
     return (
-      <Grid
-        cols={12}
-        layout={this.cells}
-        rowHeight={DASHBOARD_LAYOUT_ROW_HEIGHT}
-        useCSSTransforms={false}
-        containerPadding={[0, 0]}
-        margin={[LAYOUT_MARGIN, LAYOUT_MARGIN]}
-        onLayoutChange={this.handleLayoutChange}
-        draggableHandle=".cell--draggable"
-        isDraggable
-        isResizable
-      >
-        {fastMap(cells, cell => (
-          <div key={cell.id} className="cell">
-            <CellComponent cell={cell} manualRefresh={manualRefresh} />
-            <GradientBorder />
-          </div>
-        ))}
-      </Grid>
+      <>
+        <ScrollDetector component="dashboard" />
+        <Grid
+          cols={12}
+          layout={this.cells}
+          rowHeight={DASHBOARD_LAYOUT_ROW_HEIGHT}
+          useCSSTransforms={false}
+          containerPadding={[0, 0]}
+          margin={[LAYOUT_MARGIN, LAYOUT_MARGIN]}
+          onLayoutChange={this.handleLayoutChange}
+          draggableHandle=".cell--draggable"
+          isDraggable
+          isResizable
+        >
+          {fastMap(cells, cell => (
+            <div
+              key={cell.id}
+              className="cell"
+              data-testid={`cell ${views[cell.id]?.name}`}
+            >
+              <CellComponent cell={cell} manualRefresh={manualRefresh} />
+              <GradientBorder />
+            </div>
+          ))}
+        </Grid>
+      </>
     )
   }
 
@@ -131,7 +129,7 @@ class Cells extends Component<Props> {
     updateCells(dashboard, cells)
   }
 }
-const mstp = (state: AppState): StateProps => {
+const mstp = (state: AppState) => {
   const dashboard = state.currentDashboard.id
 
   return {
@@ -140,11 +138,10 @@ const mstp = (state: AppState): StateProps => {
     views: state.resources.views.byID,
   }
 }
-const mdtp: DispatchProps = {
+const mdtp = {
   updateCells: updateCells,
 }
 
-export default connect<StateProps, DispatchProps, OwnProps>(
-  mstp,
-  mdtp
-)(Cells)
+const connector = connect(mstp, mdtp)
+
+export default connector(Cells)

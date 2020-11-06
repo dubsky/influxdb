@@ -111,7 +111,7 @@ When(/^API end session$/, async() => {
     await influxUtils.endSession();
 });
 
-When(/^UI sign in user "(.*?)"$/, {timeout: 10000},  async username => {
+When(/^UI sign in user "(.*?)"$/, {timeout: 15000},  async username => {
     let user = influxUtils.getUser((username === 'DEFAULT') ? __defaultUser.username : username);
     await sSteps.signin(user);
     //await sSteps.driver.sleep(1500)
@@ -329,11 +329,11 @@ Then(/^the file "(.*)" has been downloaded$/, async filePath => {
 });
 
 When(/^remove files "(.*)" if exists$/, async regex => {
-    await influxUtils.removeFilesByRegex(regex);
+    await influxUtils.removeDownloadFilesByRegex(regex);
 });
 
 Then(/^a file matching "(.*)" exists$/, async regex => {
-    await bSteps.verifyFileMatchingRegexExists(regex);
+    await bSteps.verifyDownloadFileMatchingRegexExists(regex);
 });
 
 When(/^verify first CSV file matching "(.*)" as containing$/, async (path, dataDesc) => {

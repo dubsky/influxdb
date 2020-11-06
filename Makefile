@@ -33,6 +33,7 @@ endif
 export PKG_CONFIG:=$(PWD)/scripts/pkg-config.sh
 export GOOS=$(shell go env GOOS)
 export GO_BUILD=env GO111MODULE=on go build $(GO_ARGS) -ldflags "$(LDFLAGS)"
+export GO_BUILD_SM=env GO111MODULE=on go build $(GO_ARGS) -ldflags "-s -w $(LDFLAGS)"
 export GO_INSTALL=env GO111MODULE=on go install $(GO_ARGS) -ldflags "$(LDFLAGS)"
 export GO_TEST=env GOTRACEBACK=all GO111MODULE=on go test $(GO_ARGS)
 # Do not add GO111MODULE=on to the call to go generate so it doesn't pollute the environment.
@@ -65,8 +66,11 @@ CMDS := \
 # Other targets must depend on this target to correctly builds CMDS.
 ifeq ($(GOARCH), arm64)
     all: GO_ARGS=-tags 'assets noasm $(GO_TAGS)'
+    bin/$(GOOS)/influx: GO_ARGS=-tags 'noasm $(GO_TAGS)'
 else
     all: GO_ARGS=-tags 'assets $(GO_TAGS)'
+    bin/$(GOOS)/influx:	GO_ARGS=-tags '$(GO_TAGS)'
+
 endif
 all: $(SUBDIRS) generate $(CMDS)
 
@@ -80,6 +84,9 @@ $(SUBDIRS):
 #
 $(CMDS): $(SOURCES)
 	$(GO_BUILD) -o $@ ./cmd/$(shell basename "$@")
+
+bin/$(GOOS)/influx: $(SOURCES)
+	$(GO_BUILD_SM) -o $@ ./cmd/$(shell basename "$@")
 
 # Ease of use build for just the go binary
 influxd: bin/$(GOOS)/influxd
@@ -129,13 +136,14 @@ checkgenerate:
 	./etc/checkgenerate.sh
 
 checkcommit:
-	./etc/circle-detect-committed-binaries.sh
+	# ./etc/circle-detect-committed-binaries.sh
 
 generate: $(SUBDIRS)
 
 test-js: node_modules
 	make -C ui test
 
+# Download tsdb testdata before running unit tests
 test-go:
 	$(GO_TEST) ./...
 
@@ -161,7 +169,7 @@ build: all
 
 goreleaser:
 	curl -sfL -o goreleaser-install https://install.goreleaser.com/github.com/goreleaser/goreleaser.sh
-	sh goreleaser-install v0.135.0
+	sh goreleaser-install v0.142.0
 	go build -o $(GOPATH)/bin/pkg-config github.com/influxdata/pkg-config
 	install xcc.sh $(GOPATH)/bin/xcc
 
@@ -226,7 +234,7 @@ dshell-image:
 	@docker image build --build-arg "USERID=$(shell id -u)" -t influxdb:dshell --target dshell .
 
 dshell: dshell-image
-	@docker container run --rm -p 9999:9999 -p 8080:8080 -u $(shell id -u) -it -v $(shell pwd):/code -w /code influxdb:dshell 
+	@docker container run --rm -p 8086:8086 -p 8080:8080 -u $(shell id -u) -it -v $(shell pwd):/code -w /code influxdb:dshell 
 
 # .PHONY targets represent actions that do not create an actual file.
 .PHONY: all $(SUBDIRS) run fmt checkfmt tidy checktidy checkgenerate test test-go test-js test-go-race bench clean node_modules vet nightly chronogiraffe dist ping protoc e2e run-e2e influxd libflux flags dshell dclean docker-image-flux docker-image-influx goreleaser

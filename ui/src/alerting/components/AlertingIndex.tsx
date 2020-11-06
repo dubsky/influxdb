@@ -1,6 +1,6 @@
 // Libraries
 import React, {FunctionComponent, useState} from 'react'
-import {connect} from 'react-redux'
+import {Switch, Route} from 'react-router-dom'
 
 //Components
 import {Page, SelectGroup, ButtonShape} from '@influxdata/clockface'
@@ -8,33 +8,27 @@ import ChecksColumn from 'src/checks/components/ChecksColumn'
 import RulesColumn from 'src/notifications/rules/components/RulesColumn'
 import EndpointsColumn from 'src/notifications/endpoints/components/EndpointsColumn'
 import GetAssetLimits from 'src/cloud/components/GetAssetLimits'
-import AssetLimitAlert from 'src/cloud/components/AssetLimitAlert'
+import RateLimitAlert from 'src/cloud/components/RateLimitAlert'
 import GetResources from 'src/resources/components/GetResources'
-import CloudUpgradeButton from 'src/shared/components/CloudUpgradeButton'
+import NewThresholdCheckEO from 'src/checks/components/NewThresholdCheckEO'
+import NewDeadmanCheckEO from 'src/checks/components/NewDeadmanCheckEO'
+import EditCheckEO from 'src/checks/components/EditCheckEO'
+import NewRuleOverlay from 'src/notifications/rules/components/NewRuleOverlay'
+import EditRuleOverlay from 'src/notifications/rules/components/EditRuleOverlay'
+import NewEndpointOverlay from 'src/notifications/endpoints/components/NewEndpointOverlay'
+import EditEndpointOverlay from 'src/notifications/endpoints/components/EditEndpointOverlay'
 
 // Utils
 import {pageTitleSuffixer} from 'src/shared/utils/pageTitles'
-import {
-  extractMonitoringLimitStatus,
-  extractLimitedMonitoringResources,
-} from 'src/cloud/utils/limits'
 
 // Types
-import {AppState, ResourceType} from 'src/types'
-import {LimitStatus} from 'src/cloud/actions/limits'
+import {ResourceType} from 'src/types'
 
-interface StateProps {
-  limitStatus: LimitStatus
-  limitedResources: string
-}
+const alertsPath = '/orgs/:orgID/alerting'
 
 type ActiveColumn = 'checks' | 'endpoints' | 'rules'
 
-const AlertingIndex: FunctionComponent<StateProps> = ({
-  children,
-  limitStatus,
-  limitedResources,
-}) => {
+const AlertingIndex: FunctionComponent = () => {
   const [activeColumn, setActiveColumn] = useState<ActiveColumn>('checks')
 
   const pageContentsClassName = `alerting-index alerting-index__${activeColumn}`
@@ -46,9 +40,9 @@ const AlertingIndex: FunctionComponent<StateProps> = ({
   return (
     <>
       <Page titleTag={pageTitleSuffixer(['Alerts'])}>
-        <Page.Header fullWidth={true}>
+        <Page.Header fullWidth={true} testID="alerts-page--header">
           <Page.Title title="Alerts" />
-          <CloudUpgradeButton />
+          <RateLimitAlert />
         </Page.Header>
         <Page.Contents
           fullWidth={true}
@@ -57,11 +51,6 @@ const AlertingIndex: FunctionComponent<StateProps> = ({
         >
           <GetResources resources={[ResourceType.Labels, ResourceType.Buckets]}>
             <GetAssetLimits>
-              <AssetLimitAlert
-                resourceName={limitedResources}
-                limitStatus={limitStatus}
-                className="load-data--asset-alert"
-              />
               <SelectGroup
                 className="alerting-index--selector"
                 shape={ButtonShape.StretchToFit}
@@ -73,6 +62,7 @@ const AlertingIndex: FunctionComponent<StateProps> = ({
                   name="alerting-active-tab"
                   active={activeColumn === 'checks'}
                   testID="alerting-tab--checks"
+                  tabIndex={1}
                 >
                   Checks
                 </SelectGroup.Option>
@@ -83,6 +73,7 @@ const AlertingIndex: FunctionComponent<StateProps> = ({
                   name="alerting-active-tab"
                   active={activeColumn === 'endpoints'}
                   testID="alerting-tab--endpoints"
+                  tabIndex={2}
                 >
                   Notification Endpoints
                 </SelectGroup.Option>
@@ -93,38 +84,55 @@ const AlertingIndex: FunctionComponent<StateProps> = ({
                   name="alerting-active-tab"
                   active={activeColumn === 'rules'}
                   testID="alerting-tab--rules"
+                  tabIndex={3}
                 >
                   Notification Rules
                 </SelectGroup.Option>
               </SelectGroup>
               <div className="alerting-index--columns">
                 <GetResources resources={[ResourceType.Checks]}>
-                  <ChecksColumn />
+                  <ChecksColumn tabIndex={1} />
                 </GetResources>
                 <GetResources resources={[ResourceType.NotificationEndpoints]}>
-                  <EndpointsColumn />
+                  <EndpointsColumn tabIndex={2} />
                 </GetResources>
                 <GetResources resources={[ResourceType.NotificationRules]}>
-                  <RulesColumn />
+                  <RulesColumn tabIndex={3} />
                 </GetResources>
               </div>
             </GetAssetLimits>
           </GetResources>
         </Page.Contents>
       </Page>
-      {children}
+      <Switch>
+        <Route
+          path={`${alertsPath}/checks/new-threshold`}
+          component={NewThresholdCheckEO}
+        />
+        <Route
+          path={`${alertsPath}/checks/new-deadman`}
+          component={NewDeadmanCheckEO}
+        />
+        <Route
+          path={`${alertsPath}/checks/:checkID/edit`}
+          component={EditCheckEO}
+        />
+        <Route path={`${alertsPath}/rules/new`} component={NewRuleOverlay} />
+        <Route
+          path={`${alertsPath}/rules/:ruleID/edit`}
+          component={EditRuleOverlay}
+        />
+        <Route
+          path={`${alertsPath}/endpoints/new`}
+          component={NewEndpointOverlay}
+        />
+        <Route
+          path={`${alertsPath}/endpoints/:endpointID/edit`}
+          component={EditEndpointOverlay}
+        />
+      </Switch>
     </>
   )
 }
 
-const mstp = ({cloud: {limits}}: AppState): StateProps => {
-  return {
-    limitStatus: extractMonitoringLimitStatus(limits),
-    limitedResources: extractLimitedMonitoringResources(limits),
-  }
-}
-
-export default connect(
-  mstp,
-  null
-)(AlertingIndex)
+export default AlertingIndex
