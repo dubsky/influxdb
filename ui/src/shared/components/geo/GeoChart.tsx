@@ -24,7 +24,7 @@ import {
   loadTileServerSecret,
   TileServerConfigurations,
 } from 'src/shared/components/geo/tileServer'
-import {executeQueries} from 'src/timeMachine/actions/queries'
+//import {executeQueries} from 'src/timeMachine/actions/queries'
 import {getOrg} from 'src/organizations/selectors'
 
 // Constants
@@ -52,7 +52,7 @@ interface StateProps {
 interface DispatchProps {
   onUpdateViewport: (lat: number, lon: number, zoom: number) => void
   onUpdateVariableAssignment: (assignment: VariableAssignment[]) => void
-  onRefreshQuery: typeof executeQueries
+//  onRefreshQuery: any // TODO: typeof executeQueries
 }
 
 interface State {
@@ -84,7 +84,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
     height: number,
     lon: number,
     lat: number,
-    zoom: number
+    zoom: number,
   ): VariableAssignment[] {
     const pixelRadius = Math.sqrt(width * width + height * height) / 2
     // circumference of earth = 40075016.686m
@@ -125,7 +125,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
   private updateQuery = (width, height, lat, lon, zoom) => {
     const {
       isInConfigurationMode,
-      onRefreshQuery,
+     // onRefreshQuery,
       onViewVariablesReady,
       onUpdateVariableAssignment,
     } = this.props
@@ -150,14 +150,14 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
         height,
         lon,
         lat,
-        zoom
+        zoom,
       )
       // the query update may change state and updateQuery might be called
       // from render
       setTimeout(() => {
         if (isInConfigurationMode) {
           onUpdateVariableAssignment(variableAssignment)
-          onRefreshQuery()
+         // onRefreshQuery() // TODO: weird probably has no effect
         } else {
           onViewVariablesReady && onViewVariablesReady(variableAssignment)
         }
@@ -181,7 +181,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
       this.heightOnLastRender,
       lat,
       lon,
-      zoom
+      zoom,
     )
   }
 
@@ -202,7 +202,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
       height,
       latOnLastRender === null ? lat : latOnLastRender,
       this.lonOnLastRender === null ? lon : lonOnLastRender,
-      zoomOnLastRender === null ? zoom : zoomOnLastRender
+      zoomOnLastRender === null ? zoom : zoomOnLastRender,
     )
     return (
       <div className="geo">
@@ -227,6 +227,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
   }
 
   public render() {
+    console.log('geo config', this.props.properties)
     if (this.state.tileServerConfiguration) {
       return <AutoSizer>{this.onAutoResize.bind(this)}</AutoSizer>
     }
@@ -237,7 +238,7 @@ class GeoChart extends Component<OwnProps & DispatchProps & StateProps, State> {
 const mapDispatchToProps: DispatchProps = {
   onUpdateViewport: setViewport,
   onUpdateVariableAssignment: setViewVariableAssignment,
-  onRefreshQuery: executeQueries,
+//  onRefreshQuery: executeQueries,
 }
 
 const mapStateToProps = (state: AppState): StateProps => {
@@ -251,5 +252,5 @@ const mapStateToProps = (state: AppState): StateProps => {
 
 export default connect<StateProps, DispatchProps, OwnProps>(
   mapStateToProps,
-  mapDispatchToProps
+  mapDispatchToProps,
 )(GeoChart)

@@ -38,6 +38,7 @@ const CheckHistoryVisualization: FC<Props> = ({check, timeZone}) => {
       queries={[check.query]}
       key={manualRefresh}
       check={check}
+      shouldWaitForViewVariables={false}
     >
       {({giraffeResult, loading, errorMessage, isInitialFetch, statuses}) => {
         return (

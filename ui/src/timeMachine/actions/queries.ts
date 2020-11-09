@@ -184,7 +184,7 @@ const isFromTag = (node: Node) => {
 export const executeQueries = (abortController?: AbortController) => async (
   dispatch,
   getState: GetState
-) => {
+): Promise<CancelBox<RunQueryResult> | RunQueryResult[]> => {
   const executeQueriesStartTime = Date.now()
 
   const state = getState()

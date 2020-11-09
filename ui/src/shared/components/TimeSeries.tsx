@@ -57,7 +57,7 @@ import {
   ResourceType,
   DashboardQuery,
   AppState,
-  CancelBox,
+  CancelBox, VariableAssignment,
 } from 'src/types'
 import {event} from 'src/cloud/utils/reporting'
 
