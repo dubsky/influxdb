@@ -14,8 +14,8 @@ import (
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/bolt"
 	"github.com/influxdata/influxdb/v2/http"
-	"github.com/influxdata/influxdb/v2/kv"
 	influxlogger "github.com/influxdata/influxdb/v2/logger"
+	"github.com/influxdata/influxdb/v2/tenant"
 	"github.com/influxdata/influxdb/v2/v1/services/meta"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -40,10 +40,10 @@ type cmdRestoreBuilder struct {
 	kvEntry      *influxdb.ManifestKVEntry
 	shardEntries map[uint64]*influxdb.ManifestEntry
 
-	orgService     *http.OrganizationService
-	bucketService  *http.BucketService
+	orgService     *tenant.OrgClientService
+	bucketService  *tenant.BucketClientService
 	restoreService *http.RestoreService
-	kvService      *kv.Service
+	tenantService  *tenant.Service
 	metaClient     *meta.Client
 
 	logger *zap.Logger
@@ -60,7 +60,7 @@ func newCmdRestoreBuilder(f *globalFlags, opts genericCLIOpts) *cmdRestoreBuilde
 
 func (b *cmdRestoreBuilder) cmdRestore() *cobra.Command {
 	cmd := b.newCmd("restore", b.restoreRunE)
-	b.org.register(cmd, true)
+	b.org.register(b.viper, cmd, true)
 	cmd.Flags().BoolVar(&b.full, "full", false, "Fully restore and replace all data on server")
 	cmd.Flags().StringVar(&b.bucketID, "bucket-id", "", "The ID of the bucket to restore")
 	cmd.Flags().StringVarP(&b.bucketName, "bucket", "b", "", "The name of the bucket to restore")
@@ -113,8 +113,9 @@ func (b *cmdRestoreBuilder) restoreRunE(cmd *cobra.Command, args []string) (err 
 
 	ac := flags.config()
 	b.restoreService = &http.RestoreService{
-		Addr:  ac.Host,
-		Token: ac.Token,
+		Addr:               ac.Host,
+		Token:              ac.Token,
+		InsecureSkipVerify: flags.skipVerify,
 	}
 
 	client, err := newHTTPClient()
@@ -122,8 +123,8 @@ func (b *cmdRestoreBuilder) restoreRunE(cmd *cobra.Command, args []string) (err 
 		return err
 	}
 
-	b.orgService = &http.OrganizationService{Client: client}
-	b.bucketService = &http.BucketService{Client: client}
+	b.orgService = &tenant.OrgClientService{Client: client}
+	b.bucketService = &tenant.BucketClientService{Client: client}
 
 	if !b.full {
 		return b.restorePartial(ctx)
@@ -176,7 +177,9 @@ func (b *cmdRestoreBuilder) restorePartial(ctx context.Context) (err error) {
 	// Open meta store so we can iterate over meta data.
 	kvStore := bolt.NewKVStore(b.logger, boltClient.Path)
 	kvStore.WithDB(boltClient.DB())
-	b.kvService = kv.NewService(b.logger, kvStore, kv.ServiceConfig{})
+
+	tenantStore := tenant.NewStore(kvStore)
+	b.tenantService = tenant.NewService(tenantStore)
 
 	b.metaClient = meta.NewClient(meta.NewConfig(), kvStore)
 	if err := b.metaClient.Open(); err != nil {
@@ -205,7 +208,7 @@ func (b *cmdRestoreBuilder) restoreOrganizations(ctx context.Context) (err error
 	}
 
 	// Retrieve a list of all matching organizations.
-	orgs, _, err := b.kvService.FindOrganizations(ctx, filter)
+	orgs, _, err := b.tenantService.FindOrganizations(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -250,7 +253,7 @@ func (b *cmdRestoreBuilder) restoreOrganization(ctx context.Context, org *influx
 	}
 
 	// Retrieve a list of all buckets for the organization in the local backup.
-	buckets, _, err := b.kvService.FindBuckets(ctx, filter)
+	buckets, _, err := b.tenantService.FindBuckets(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -394,6 +397,6 @@ func (b *cmdRestoreBuilder) loadIncremental() error {
 func (b *cmdRestoreBuilder) newCmd(use string, runE func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := b.genericCLIOpts.newCmd(use, runE, true)
 	b.genericCLIOpts.registerPrintOptions(cmd)
-	b.globalFlags.registerFlags(cmd)
+	b.globalFlags.registerFlags(b.viper, cmd)
 	return cmd
 }

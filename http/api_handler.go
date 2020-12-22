@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi"
+	"github.com/influxdata/httprouter"
 	"github.com/influxdata/influxdb/v2"
 	"github.com/influxdata/influxdb/v2/authorizer"
 	"github.com/influxdata/influxdb/v2/chronograf/server"
@@ -267,4 +269,26 @@ func serveLinksHandler(errorHandler influxdb.HTTPErrorHandler) http.Handler {
 		}
 	}
 	return http.HandlerFunc(fn)
+}
+
+func decodeIDFromCtx(ctx context.Context, name string) (influxdb.ID, error) {
+	params := httprouter.ParamsFromContext(ctx)
+	idStr := params.ByName(name)
+
+	if idStr == "" {
+		return 0, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing " + name,
+		}
+	}
+
+	var i influxdb.ID
+	if err := i.DecodeFromString(idStr); err != nil {
+		return 0, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Err:  err,
+		}
+	}
+
+	return i, nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/influxdata/influxdb/v2/http"
 	"github.com/influxdata/influxdb/v2/kv"
 	influxlogger "github.com/influxdata/influxdb/v2/logger"
+	"github.com/influxdata/influxdb/v2/tenant"
 	"github.com/influxdata/influxdb/v2/v1/services/meta"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -39,6 +40,7 @@ type cmdBackupBuilder struct {
 	backupService *http.BackupService
 	kvStore       *bolt.KVStore
 	kvService     *kv.Service
+	tenantService *tenant.Service
 	metaClient    *meta.Client
 
 	logger *zap.Logger
@@ -53,7 +55,7 @@ func newCmdBackupBuilder(f *globalFlags, opts genericCLIOpts) *cmdBackupBuilder 
 
 func (b *cmdBackupBuilder) cmdBackup() *cobra.Command {
 	cmd := b.newCmd("backup", b.backupRunE)
-	b.org.register(cmd, true)
+	b.org.register(b.viper, cmd, true)
 	cmd.Flags().StringVar(&b.bucketID, "bucket-id", "", "The ID of the bucket to backup")
 	cmd.Flags().StringVarP(&b.bucketName, "bucket", "b", "", "The name of the bucket to backup")
 	cmd.Use = "backup [flags] path"
@@ -108,8 +110,9 @@ func (b *cmdBackupBuilder) backupRunE(cmd *cobra.Command, args []string) (err er
 
 	ac := flags.config()
 	b.backupService = &http.BackupService{
-		Addr:  ac.Host,
-		Token: ac.Token,
+		Addr:               ac.Host,
+		Token:              ac.Token,
+		InsecureSkipVerify: flags.skipVerify,
 	}
 
 	// Back up Bolt database to file.
@@ -128,7 +131,11 @@ func (b *cmdBackupBuilder) backupRunE(cmd *cobra.Command, args []string) (err er
 	// Open meta store so we can iterate over meta data.
 	b.kvStore = bolt.NewKVStore(b.logger, filepath.Join(b.path, b.kvPath()))
 	b.kvStore.WithDB(boltClient.DB())
-	b.kvService = kv.NewService(b.logger, b.kvStore, kv.ServiceConfig{})
+
+	tenantStore := tenant.NewStore(b.kvStore)
+	b.tenantService = tenant.NewService(tenantStore)
+
+	b.kvService = kv.NewService(b.logger, b.kvStore, b.tenantService, kv.ServiceConfig{})
 
 	b.metaClient = meta.NewClient(meta.NewConfig(), b.kvStore)
 	if err := b.metaClient.Open(); err != nil {
@@ -195,7 +202,7 @@ func (b *cmdBackupBuilder) backupOrganizations(ctx context.Context) (err error) 
 	}
 
 	// Retrieve a list of all matching organizations.
-	orgs, _, err := b.kvService.FindOrganizations(ctx, filter)
+	orgs, _, err := b.tenantService.FindOrganizations(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -223,7 +230,7 @@ func (b *cmdBackupBuilder) backupBuckets(ctx context.Context, org *influxdb.Orga
 	}
 
 	// Retrieve a list of all matching organizations.
-	buckets, _, err := b.kvService.FindBuckets(ctx, filter)
+	buckets, _, err := b.tenantService.FindBuckets(ctx, filter)
 	if err != nil {
 		return err
 	}
@@ -330,6 +337,6 @@ func (b *cmdBackupBuilder) writeManifest(ctx context.Context) error {
 func (b *cmdBackupBuilder) newCmd(use string, runE func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := b.genericCLIOpts.newCmd(use, runE, true)
 	b.genericCLIOpts.registerPrintOptions(cmd)
-	b.globalFlags.registerFlags(cmd)
+	b.globalFlags.registerFlags(b.viper, cmd)
 	return cmd
 }

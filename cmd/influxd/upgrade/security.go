@@ -16,24 +16,32 @@ import (
 )
 
 // upgradeUsers creates tokens representing v1 users.
-func upgradeUsers(ctx context.Context, v1 *influxDBv1, v2 *influxDBv2, targetOptions *optionsV2, dbBuckets map[string][]platform.ID, log *zap.Logger) error {
+func upgradeUsers(
+	ctx context.Context,
+	v1 *influxDBv1,
+	v2 *influxDBv2,
+	targetOptions *optionsV2,
+	dbBuckets map[string][]platform.ID,
+	log *zap.Logger,
+) (int, error) {
 	// check if there any 1.x users at all
 	v1meta := v1.meta
 	if len(v1meta.Users()) == 0 {
 		log.Info("There are no users in 1.x, nothing to upgrade.")
-		return nil
+		return 0, nil
 	}
 
 	// get helper instance
-	helper := newSecurityScriptHelper(log)
+	helper := newSecurityUpgradeHelper(log)
 
 	// check if target buckets exists in 2.x
 	proceed := helper.checkDbBuckets(v1meta, dbBuckets)
 	if !proceed {
-		return errors.New("upgrade: there were errors/warnings, please fix them and run the command again")
+		return 0, errors.New("upgrade: there were errors/warnings, please fix them and run the command again")
 	}
 
 	// upgrade users
+	numUpgraded := 0
 	for _, row := range helper.sortUserInfo(v1meta.Users()) {
 		username := row.Name
 		if row.Admin {
@@ -53,24 +61,24 @@ func upgradeUsers(ctx context.Context, v1 *influxDBv1, v2 *influxDBv2, targetOpt
 					case influxql.ReadPrivilege:
 						p, err := platform.NewPermissionAtID(id, platform.ReadAction, platform.BucketsResourceType, targetOptions.orgID)
 						if err != nil {
-							return err
+							return numUpgraded, err
 						}
 						permissions = append(permissions, *p)
 					case influxql.WritePrivilege:
 						p, err := platform.NewPermissionAtID(id, platform.WriteAction, platform.BucketsResourceType, targetOptions.orgID)
 						if err != nil {
-							return err
+							return numUpgraded, err
 						}
 						permissions = append(permissions, *p)
 					case influxql.AllPrivileges:
 						p, err := platform.NewPermissionAtID(id, platform.ReadAction, platform.BucketsResourceType, targetOptions.orgID)
 						if err != nil {
-							return err
+							return numUpgraded, err
 						}
 						permissions = append(permissions, *p)
 						p, err = platform.NewPermissionAtID(id, platform.WriteAction, platform.BucketsResourceType, targetOptions.orgID)
 						if err != nil {
-							return err
+							return numUpgraded, err
 						}
 						permissions = append(permissions, *p)
 					}
@@ -78,7 +86,7 @@ func upgradeUsers(ctx context.Context, v1 *influxDBv1, v2 *influxDBv2, targetOpt
 			}
 			if len(permissions) > 0 {
 				auth := &platform.Authorization{
-					Description: username + "'s Token",
+					Description: username + "'s Legacy Token",
 					Permissions: permissions,
 					Token:       username,
 					OrgID:       targetOptions.orgID,
@@ -95,29 +103,30 @@ func upgradeUsers(ctx context.Context, v1 *influxDBv1, v2 *influxDBv2, targetOpt
 					continue
 				}
 				log.Info("User upgraded.", zap.String("username", username))
+				numUpgraded++
 			} else {
 				log.Info("User has no privileges and will not be upgraded.", zap.String("username", username))
 			}
 		}
 	}
 
-	return nil
+	return numUpgraded, nil
 }
 
-// securityScriptHelper is a helper used by `generate-security-script` command.
-type securityScriptHelper struct {
+// securityUpgradeHelper is a helper used by `upgrade` command.
+type securityUpgradeHelper struct {
 	log *zap.Logger
 }
 
-// newSecurityScriptHelper returns new security script helper instance for `generate-security-script` command.
-func newSecurityScriptHelper(log *zap.Logger) *securityScriptHelper {
-	helper := &securityScriptHelper{
+// newSecurityUpgradeHelper returns new security script helper instance for `upgrade` command.
+func newSecurityUpgradeHelper(log *zap.Logger) *securityUpgradeHelper {
+	helper := &securityUpgradeHelper{
 		log: log,
 	}
 
 	return helper
 }
-func (h *securityScriptHelper) checkDbBuckets(meta *meta.Client, databases map[string][]platform.ID) bool {
+func (h *securityUpgradeHelper) checkDbBuckets(meta *meta.Client, databases map[string][]platform.ID) bool {
 	ok := true
 	for _, row := range meta.Users() {
 		for database := range row.Privileges {
@@ -135,7 +144,7 @@ func (h *securityScriptHelper) checkDbBuckets(meta *meta.Client, databases map[s
 	return ok
 }
 
-func (h *securityScriptHelper) sortUserInfo(info []meta.UserInfo) []meta.UserInfo {
+func (h *securityUpgradeHelper) sortUserInfo(info []meta.UserInfo) []meta.UserInfo {
 	sort.Slice(info, func(i, j int) bool {
 		return info[i].Name < info[j].Name
 	})
