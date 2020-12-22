@@ -10,7 +10,7 @@ import (
 	platformtesting "github.com/influxdata/influxdb/v2/testing"
 )
 
-func TestView_MarshalJSON2(t *testing.T) {
+func TestView_MarshalJSON(t *testing.T) {
 	type args struct {
 		view platform.View
 	}
